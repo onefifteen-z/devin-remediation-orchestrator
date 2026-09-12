@@ -1,0 +1,47 @@
+from functools import lru_cache
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    devin_api_key: str = ""
+    devin_org_id: str = ""
+    devin_api_base_url: str = "https://api.devin.ai/v3"
+    devin_live_enabled: bool = False
+
+    github_token: str = ""
+    github_webhook_secret: str = ""
+
+    database_url: str = "sqlite:///./data/app.db"
+
+    max_active_sessions: int = 3
+    max_retries: int = 3
+    devin_session_timeout_minutes: int = 60
+
+    max_acu_per_task: int | None = None
+    daily_acu_cap: int | None = None
+
+    cors_origins: str = "http://localhost:3000"
+    log_level: str = "INFO"
+
+    def cors_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    @field_validator("max_acu_per_task", "daily_acu_cap", mode="before")
+    @classmethod
+    def parse_optional_int(cls, value: str | int | None) -> int | None:
+        if value is None or value == "":
+            return None
+        return int(value)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
