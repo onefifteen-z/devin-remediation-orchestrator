@@ -90,13 +90,6 @@ async def github_webhook(
     event = _normalize_event(x_github_delivery, payload)
     orchestrator = RemediationOrchestrator(db, settings)
 
-    existing = orchestrator.repo.get_by_delivery_id(event.github_delivery_id)
-    if existing:
-        return {
-            "status": "duplicate",
-            "task": TaskResponse.from_orm_task(existing).model_dump(),
-        }
-
     try:
         task = orchestrator.handle_webhook_event(event)
     except DuplicateDeliveryError as exc:

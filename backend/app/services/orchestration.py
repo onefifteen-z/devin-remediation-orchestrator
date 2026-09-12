@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models.task import RemediationTask, TaskStatus
-from app.repositories.tasks import DuplicateDeliveryError, TaskRepository
+from app.repositories.tasks import TaskRepository
 from app.schemas.task import RemediationEvent, TaskCreate
 from app.services.devin import DevinAPIError, DevinClient
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
@@ -30,27 +30,17 @@ class RemediationOrchestrator:
         self.devin_client = devin_client or DevinClient(settings)
 
     def handle_webhook_event(self, event: RemediationEvent) -> RemediationTask:
-        try:
-            return self.repo.create_task(
-                TaskCreate(
-                    github_delivery_id=event.github_delivery_id,
-                    github_repository=event.github_repository,
-                    github_issue_number=event.github_issue_number,
-                    github_issue_url=event.github_issue_url,
-                    issue_title=event.issue_title,
-                    issue_type=event.issue_type,
-                    max_retries=self.settings.max_retries,
-                )
+        return self.repo.create_task(
+            TaskCreate(
+                github_delivery_id=event.github_delivery_id,
+                github_repository=event.github_repository,
+                github_issue_number=event.github_issue_number,
+                github_issue_url=event.github_issue_url,
+                issue_title=event.issue_title,
+                issue_type=event.issue_type,
+                max_retries=self.settings.max_retries,
             )
-        except DuplicateDeliveryError as exc:
-            logger.info(
-                "Duplicate webhook delivery",
-                extra={
-                    "github_delivery_id": event.github_delivery_id,
-                    "task_id": exc.existing_task.id,
-                },
-            )
-            return exc.existing_task
+        )
 
     async def process_task(self, task_id: int) -> None:
         task = self.repo.get_by_id(task_id)
@@ -58,10 +48,14 @@ class RemediationOrchestrator:
             logger.warning("Task not found", extra={"task_id": task_id})
             return
 
-        if task.status != TaskStatus.RECEIVED:
+        if not self.settings.devin_live_enabled:
             logger.info(
-                "Skipping task processing; not in RECEIVED state",
-                extra={"task_id": task_id, "status": task.status.value},
+                "DEVIN_LIVE_ENABLED=false; task remains at RECEIVED",
+                extra={
+                    "task_id": task_id,
+                    "repository": task.github_repository,
+                    "issue_number": task.github_issue_number,
+                },
             )
             return
 
@@ -70,6 +64,16 @@ class RemediationOrchestrator:
                 task,
                 TaskStatus.ESCALATED,
                 escalation_reason="Task exceeded safety boundary before processing",
+            )
+            return
+
+        claimed_task = self.repo.claim_task_if_received(task_id)
+        if not claimed_task:
+            latest = self.repo.get_by_id(task_id)
+            status = latest.status.value if latest else "unknown"
+            logger.info(
+                "Task already claimed or no longer RECEIVED",
+                extra={"task_id": task_id, "status": status},
             )
             return
 
@@ -83,21 +87,15 @@ class RemediationOrchestrator:
                     "max_active_sessions": self.settings.max_active_sessions,
                 },
             )
-            return
-
-        prompt = build_remediation_prompt(task)
-        tags = build_session_tags(task)
-
-        if not self.settings.devin_live_enabled:
-            logger.info(
-                "DEVIN_LIVE_ENABLED=false; task remains at RECEIVED",
-                extra={
-                    "task_id": task_id,
-                    "repository": task.github_repository,
-                    "issue_number": task.github_issue_number,
-                },
+            self.transition(
+                claimed_task,
+                TaskStatus.RECEIVED,
+                started_at=None,
             )
             return
+
+        prompt = build_remediation_prompt(claimed_task)
+        tags = build_session_tags(claimed_task)
 
         try:
             session = await self.devin_client.create_session(
@@ -106,14 +104,13 @@ class RemediationOrchestrator:
                 max_acu_limit=self.settings.max_acu_per_task,
             )
             self.transition(
-                task,
+                claimed_task,
                 TaskStatus.SESSION_CREATED,
                 devin_session_id=session.session_id,
                 devin_session_url=session.url,
-                started_at=datetime.now(UTC),
             )
         except DevinAPIError as exc:
-            self.handle_retryable_error(task, str(exc))
+            self.handle_retryable_error(claimed_task, str(exc))
 
     def transition(self, task: RemediationTask, new_status: TaskStatus, **fields) -> RemediationTask:
         logger.info(

@@ -1,9 +1,10 @@
 import pytest
 from datetime import UTC, datetime, timedelta
+import asyncio
 
 from app.config import Settings
 from app.models.task import RemediationTask, TaskStatus
-from app.repositories.tasks import TaskRepository
+from app.repositories.tasks import DuplicateDeliveryError, TaskRepository
 from app.schemas.task import RemediationEvent, TaskCreate
 from app.services.orchestration import RemediationOrchestrator
 
@@ -124,3 +125,49 @@ def test_concurrency_cap_counted(orchestrator, db_session):
         )
         repo.update_status(task, TaskStatus.RUNNING)
     assert repo.count_active_sessions() == 2
+
+
+class FakeDevinClient:
+    def __init__(self):
+        self.calls = 0
+
+    async def create_session(self, prompt, tags=None, max_acu_limit=None):
+        self.calls += 1
+        await asyncio.sleep(0.05)
+
+        class Result:
+            session_id = "devin-test-001"
+            url = "https://app.devin.ai/sessions/devin-test-001"
+            status = "running"
+
+        return Result()
+
+
+@pytest.mark.asyncio
+async def test_process_task_claims_atomically(db_session):
+    settings = Settings(
+        github_webhook_secret="test",
+        max_active_sessions=5,
+        max_retries=3,
+        devin_session_timeout_minutes=60,
+        devin_live_enabled=True,
+    )
+    fake_client = FakeDevinClient()
+    orchestrator = RemediationOrchestrator(db_session, settings, devin_client=fake_client)
+    task = orchestrator.handle_webhook_event(_make_event("atomic-001"))
+
+    await asyncio.gather(
+        orchestrator.process_task(task.id),
+        orchestrator.process_task(task.id),
+    )
+
+    refreshed = TaskRepository(db_session).get_by_id(task.id)
+    assert fake_client.calls == 1
+    assert refreshed.status == TaskStatus.SESSION_CREATED
+    assert refreshed.devin_session_id == "devin-test-001"
+
+
+def test_duplicate_delivery_raises_error(orchestrator):
+    orchestrator.handle_webhook_event(_make_event("dup-001"))
+    with pytest.raises(DuplicateDeliveryError):
+        orchestrator.handle_webhook_event(_make_event("dup-001"))
