@@ -25,6 +25,8 @@ class Settings(BaseSettings):
 
     max_active_sessions: int = 3
     max_retries: int = 3
+    max_ci_repair_attempts: int = 2
+    max_ci_non_code_failures: int = 3
     devin_session_timeout_minutes: int = 60
 
     max_acu_per_task: int | None = None

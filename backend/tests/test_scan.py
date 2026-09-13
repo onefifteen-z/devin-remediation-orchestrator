@@ -73,7 +73,11 @@ async def test_scan_skips_existing_issues(db_session, scan_settings):
     assert repo.get_by_issue("owner/superset", 200) is not None
 
 
-def test_scan_endpoint_requires_token(client):
+def test_scan_endpoint_requires_token(client, monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "")
+    from app.config import get_settings
+
+    get_settings.cache_clear()
     response = client.post("/api/scan/github")
     assert response.status_code == 503
 

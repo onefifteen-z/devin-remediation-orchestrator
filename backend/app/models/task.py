@@ -76,6 +76,22 @@ class RemediationTask(Base):
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     escalation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    failure_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    ci_classification_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ci_check_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    ci_check_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    ci_conclusion: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ci_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ci_repair_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_ci_check_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ci_repair_message_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ci_repair_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    ci_non_code_failure_count: Mapped[int] = mapped_column(Integer, default=0)
+
     acu_used: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     merge_notification_sent: Mapped[bool] = mapped_column(default=False)

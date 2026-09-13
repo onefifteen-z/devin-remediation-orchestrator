@@ -26,6 +26,13 @@ run_migrations()
 
 
 @pytest.fixture(autouse=True)
+def reset_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def clean_db():
     engine = get_engine()
     Base.metadata.drop_all(bind=engine)
@@ -142,4 +149,57 @@ def signed_pr_webhook_request(
         secret,
         delivery_id=delivery_id,
         event="pull_request",
+    )
+
+
+def make_check_run_payload(
+    conclusion: str = "failure",
+    check_name: str = "Python Unit Tests",
+    repo: str = "owner/superset",
+    pr_number: int = 123,
+    check_run_id: int = 987654321,
+    status: str = "completed",
+    output_title: str | None = None,
+    output_summary: str | None = None,
+    pull_requests: list[dict] | None = None,
+) -> dict:
+    if pull_requests is None:
+        pull_requests = [
+            {
+                "number": pr_number,
+                "head": {"ref": "fix-branch", "sha": "abc123def456"},
+                "base": {"ref": "master"},
+            }
+        ]
+    return {
+        "action": "completed",
+        "check_run": {
+            "id": check_run_id,
+            "name": check_name,
+            "status": status,
+            "conclusion": conclusion,
+            "html_url": f"https://github.com/{repo}/runs/{check_run_id}",
+            "head_sha": "abc123def456",
+            "output": {
+                "title": output_title or f"{check_name} {conclusion}",
+                "summary": output_summary or "",
+            },
+            "pull_requests": pull_requests,
+        },
+        "repository": {"full_name": repo},
+    }
+
+
+def signed_check_run_webhook_request(
+    client: TestClient,
+    payload: dict,
+    secret: str,
+    delivery_id: str = "check-run-delivery-001",
+):
+    return signed_webhook_request(
+        client,
+        payload,
+        secret,
+        delivery_id=delivery_id,
+        event="check_run",
     )

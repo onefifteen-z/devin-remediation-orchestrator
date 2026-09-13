@@ -34,6 +34,18 @@ export interface Task {
   merged_at: string | null
   failure_reason: string | null
   escalation_reason: string | null
+  failure_type: string | null
+  ci_classification_reason: string | null
+  ci_check_name: string | null
+  ci_check_url: string | null
+  ci_conclusion: string | null
+  ci_failure_at: string | null
+  ci_repair_attempts: number
+  max_ci_repair_attempts: number
+  last_ci_check_run_id: number | null
+  ci_repair_message_sent_at: string | null
+  ci_repair_verified_at: string | null
+  ci_non_code_failure_count: number
   acu_used: number | null
   created_at: string
   updated_at: string

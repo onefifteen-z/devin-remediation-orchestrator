@@ -18,3 +18,16 @@ def find_task_for_pr(
         return by_number
 
     return None
+
+
+def find_task_for_check_run(
+    repo: TaskRepository,
+    repository: str,
+    pr_numbers: list[int],
+) -> RemediationTask | None:
+    """Deterministically associate a check_run with a remediation task via PR number."""
+    if not pr_numbers:
+        return None
+    pr_number = pr_numbers[0]
+    pr_url = f"https://github.com/{repository}/pull/{pr_number}"
+    return find_task_for_pr(repo, repository, pr_url, pr_number)
