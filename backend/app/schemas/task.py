@@ -40,6 +40,7 @@ class TaskResponse(BaseModel):
     devin_session_url: str | None
     status: TaskStatus
     pr_url: str | None
+    pr_state: str | None = None
     retry_count: int
     max_retries: int
     started_at: datetime | None
@@ -73,6 +74,7 @@ class TaskResponse(BaseModel):
             devin_session_url=task.devin_session_url,
             status=task.status,
             pr_url=task.pr_url,
+            pr_state=task.pr_state,
             retry_count=task.retry_count,
             max_retries=task.max_retries,
             started_at=task.started_at,

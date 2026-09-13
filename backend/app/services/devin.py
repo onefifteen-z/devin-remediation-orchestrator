@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.schemas.devin_session import DevinSessionResponse, parse_devin_session_response
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +119,35 @@ class DevinClient:
         )
         return self._parse_session(data)
 
-    async def get_session(self, devin_id: str) -> DevinSessionResult:
+    async def get_session(self, devin_id: str) -> DevinSessionResponse:
         client = await self._get_client()
-        response = await client.get(self._org_path(f"/sessions/{devin_id}"))
+        try:
+            response = await client.get(self._org_path(f"/sessions/{devin_id}"))
+        except httpx.TimeoutException:
+            raise DevinAPIError("Devin API request timed out") from None
+
         if response.status_code >= 400:
             self._handle_error(response)
-        return self._parse_session(response.json())
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+        try:
+            session = parse_devin_session_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+        logger.debug(
+            "Devin session fetched",
+            extra={
+                "devin_session_id": session.session_id,
+                "status": session.status,
+                "acus_consumed": session.acus_consumed,
+            },
+        )
+        return session
 
     async def send_message(self, devin_id: str, message: str) -> DevinSessionResult:
         client = await self._get_client()

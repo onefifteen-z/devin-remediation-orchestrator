@@ -7,7 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatDuration } from "@/lib/utils"
+import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
 
 interface TaskTableProps {
@@ -24,8 +24,9 @@ export function TaskTable({ tasks }: TaskTableProps) {
           <TableHead>Status</TableHead>
           <TableHead>Devin Session</TableHead>
           <TableHead>PR</TableHead>
-          <TableHead>MTTR</TableHead>
           <TableHead>ACU</TableHead>
+          <TableHead>Created</TableHead>
+          <TableHead>Updated</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -77,10 +78,13 @@ export function TaskTable({ tasks }: TaskTableProps) {
               )}
             </TableCell>
             <TableCell className="font-mono text-xs tabular-nums">
-              {formatDuration(task.mttr_seconds)}
-            </TableCell>
-            <TableCell className="font-mono text-xs tabular-nums">
               {task.acu_used != null ? task.acu_used.toFixed(1) : "—"}
+            </TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+              {formatDateTime(task.created_at)}
+            </TableCell>
+            <TableCell className="text-xs text-muted-foreground">
+              {formatDateTime(task.updated_at)}
             </TableCell>
           </TableRow>
         ))}

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -7,7 +8,9 @@ from fastapi.responses import JSONResponse
 
 from app.api import health, metrics, remediations, scan, tasks, webhooks
 from app.config import get_settings
-from app.database import init_db
+from app.database import get_session_factory, init_db
+from app.services.devin import DevinClient
+from app.workers.poller import SessionPoller
 
 settings = get_settings()
 
@@ -22,7 +25,21 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     init_db()
     logger.info("Database initialized")
+
+    devin_client = DevinClient(settings)
+    poller = SessionPoller(settings, get_session_factory(), devin_client)
+    poller_task = poller.start_background()
+
     yield
+
+    await poller.stop()
+    await devin_client.close()
+    if not poller_task.done():
+        poller_task.cancel()
+        try:
+            await poller_task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

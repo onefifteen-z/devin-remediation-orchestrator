@@ -21,6 +21,7 @@ export interface Task {
   devin_session_url: string | null
   status: TaskStatus
   pr_url: string | null
+  pr_state: string | null
   retry_count: number
   max_retries: number
   started_at: string | null

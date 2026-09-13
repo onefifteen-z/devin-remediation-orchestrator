@@ -26,6 +26,8 @@ ACTIVE_STATUSES = {
     TaskStatus.CI_FAILED,
 }
 
+POLLABLE_STATUSES = ACTIVE_STATUSES
+
 TERMINAL_STATUSES = {
     TaskStatus.MERGED,
     TaskStatus.FAILED,
@@ -57,6 +59,7 @@ class RemediationTask(Base):
     )
 
     pr_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pr_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)

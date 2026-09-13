@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-webhook-secret")
 os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("DEVIN_LIVE_ENABLED", "false")
+os.environ.setdefault("DEVIN_SESSION_POLL_INTERVAL_SECONDS", "0")
 
 from app.config import get_settings
 from app.database import Base, get_db, get_engine, get_session_factory, reset_database

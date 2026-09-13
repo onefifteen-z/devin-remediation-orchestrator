@@ -19,13 +19,13 @@ export function Dashboard() {
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
     queryFn: fetchMetrics,
-    refetchInterval: 30000,
+    refetchInterval: 15000,
   })
 
   const tasksQuery = useQuery({
     queryKey: ["tasks"],
     queryFn: fetchTasks,
-    refetchInterval: 30000,
+    refetchInterval: 15000,
   })
 
   const isLoading = metricsQuery.isLoading || tasksQuery.isLoading
@@ -113,13 +113,19 @@ export function Dashboard() {
 
         <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard
-            title="Success Rate"
-            value={metrics ? formatPercent(metrics.success_rate) : "—"}
+            title="Active Tasks"
+            value={metrics ? String(metrics.active_tasks) : "—"}
+            loading={isLoading}
+          />
+          <MetricCard
+            title="Tasks with PRs"
+            value={metrics ? String(metrics.tasks_with_prs) : "—"}
             loading={isLoading}
           />
           <MetricCard
             title="Merge Rate"
             value={metrics ? formatPercent(metrics.merge_rate) : "—"}
+            description="Requires verified GitHub merge"
             loading={isLoading}
           />
           <MetricCard
@@ -128,12 +134,7 @@ export function Dashboard() {
             loading={isLoading}
           />
           <MetricCard
-            title="Throughput (7d)"
-            value={metrics ? String(metrics.throughput_7d) : "—"}
-            loading={isLoading}
-          />
-          <MetricCard
-            title="ACU Used"
+            title="Total ACU"
             value={metrics ? metrics.total_acu.toFixed(1) : "—"}
             loading={isLoading}
           />

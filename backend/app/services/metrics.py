@@ -21,6 +21,7 @@ class MetricsService:
         merged = [t for t in tasks if t.status == TaskStatus.MERGED]
         failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
         escalated = sum(1 for t in tasks if t.status == TaskStatus.ESCALATED)
+        tasks_with_prs = sum(1 for t in tasks if t.pr_url is not None)
         terminal = [t for t in tasks if t.status in TERMINAL_STATUSES]
 
         success_rate = len(merged) / len(terminal) if terminal else 0.0
@@ -62,6 +63,7 @@ class MetricsService:
             ci_recovery_rate=round(ci_recovery_rate, 4),
             total_acu=round(total_acu, 2),
             average_acu_per_task=round(average_acu, 2),
+            tasks_with_prs=tasks_with_prs,
             failed_tasks=failed,
             escalated_tasks=escalated,
         )

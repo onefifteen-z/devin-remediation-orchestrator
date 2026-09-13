@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     max_acu_per_task: int | None = None
     daily_acu_cap: int | None = None
 
+    devin_session_poll_interval_seconds: int = 15
+    devin_poll_max_failures: int = 10
+
     cors_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
 

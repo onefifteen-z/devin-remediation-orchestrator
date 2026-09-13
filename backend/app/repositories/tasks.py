@@ -4,7 +4,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.models.task import ACTIVE_STATUSES, RemediationTask, TaskStatus
+from app.models.task import ACTIVE_STATUSES, POLLABLE_STATUSES, RemediationTask, TaskStatus
 from app.schemas.task import TaskCreate
 
 
@@ -128,6 +128,35 @@ class TaskRepository:
             .where(RemediationTask.status.in_(ACTIVE_STATUSES))
         )
         return self.db.scalar(stmt) or 0
+
+    def list_pollable_tasks(self) -> list[RemediationTask]:
+        stmt = (
+            select(RemediationTask)
+            .where(
+                RemediationTask.devin_session_id.isnot(None),
+                RemediationTask.status.in_(POLLABLE_STATUSES),
+            )
+            .order_by(RemediationTask.updated_at.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
+    def claim_task_for_polling(self, task_id: int) -> RemediationTask | None:
+        """Atomically claim a pollable task for session sync."""
+        now = datetime.now(UTC)
+        stmt = (
+            update(RemediationTask)
+            .where(
+                RemediationTask.id == task_id,
+                RemediationTask.devin_session_id.isnot(None),
+                RemediationTask.status.in_(POLLABLE_STATUSES),
+            )
+            .values(updated_at=now)
+        )
+        result = self.db.execute(stmt)
+        self.db.commit()
+        if result.rowcount != 1:
+            return None
+        return self.get_by_id(task_id)
 
     def list_all(self) -> list[RemediationTask]:
         stmt = select(RemediationTask).order_by(RemediationTask.created_at.desc())
