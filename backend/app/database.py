@@ -31,6 +31,20 @@ PHASE_2B_AUDIT_COLUMNS = {
 
 PHASE_2C_COLUMNS = {"merge_notification_sent"}
 
+PHASE_3_CI_COLUMNS = {
+    "failure_type",
+    "ci_classification_reason",
+    "ci_check_name",
+    "ci_check_url",
+    "ci_conclusion",
+    "ci_failure_at",
+    "ci_repair_attempts",
+    "last_ci_check_run_id",
+    "ci_repair_message_sent_at",
+    "ci_repair_verified_at",
+    "ci_non_code_failure_count",
+}
+
 
 def get_engine():
     global _engine
@@ -82,7 +96,15 @@ def _upgrade_database(engine, database_url: str) -> None:
                 PHASE_2B_AUDIT_COLUMNS.issubset(columns)
                 and "uq_repo_issue" in unique_constraints
             )
+            has_phase_3_ci = PHASE_3_CI_COLUMNS.issubset(columns)
             if (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+            ):
+                baseline = "0004"
+            elif (
                 has_phase_2b
                 and PHASE_2C_COLUMNS.issubset(columns)
                 and has_webhook_deliveries

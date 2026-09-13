@@ -149,6 +149,8 @@ without deleting its existing data.
 | `DATABASE_URL` | Default: `sqlite:///./data/app.db` |
 | `MAX_ACTIVE_SESSIONS` | Concurrency limit (default: 3) |
 | `MAX_RETRIES` | Max retries before escalation (default: 3) |
+| `MAX_CI_REPAIR_ATTEMPTS` | Max same-session Devin CI repairs (default: 2) |
+| `MAX_CI_NON_CODE_FAILURES` | Non-code CI failures before escalation (default: 3) |
 | `DEVIN_SESSION_TIMEOUT_MINUTES` | Session timeout (default: 60) |
 | `DEVIN_SESSION_POLL_INTERVAL_SECONDS` | Devin session poll interval in seconds (default: 15; `0` disables poller) |
 | `DEVIN_POLL_MAX_FAILURES` | Consecutive poll failures before escalation (default: 10) |
@@ -274,6 +276,80 @@ curl -X POST http://localhost:8000/webhooks/github \
 
 A matching remediation task (same repo + PR URL) must exist for PR webhooks to update lifecycle state.
 
+### Simulate a check_run webhook locally
+
+```bash
+SECRET="test-webhook-secret"
+BODY=$(cat backend/tests/fixtures/check_run_failure.json)
+SIG="sha256=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+
+curl -X POST http://localhost:8000/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: check_run" \
+  -H "X-GitHub-Delivery: check-run-delivery-001" \
+  -H "X-Hub-Signature-256: $SIG" \
+  -d "$BODY"
+```
+
+A matching remediation task (same repo + PR number) must exist. Other fixtures under `backend/tests/fixtures/check_run_*.json` cover cancelled, timeout, infra, success, and unknown scenarios.
+
+## CI Failure Intelligence
+
+**Design principle:** We invoke Devin only when CI evidence suggests autonomous engineering action is warranted. CI failure does not always mean code failure.
+
+When GitHub CI fails on a Devin-opened PR, the orchestrator:
+
+1. Receives a signed `check_run` webhook (`status=completed`, failure-like conclusion)
+2. Normalizes the payload into `CiCheckRunEvent`
+3. Associates the check with an existing remediation task via `check_run.pull_requests[0].number`
+4. Classifies the failure deterministically (no LLM)
+5. Persists CI metadata on the task (workflow `status` stays `PR_OPENED` / `READY_FOR_REVIEW`)
+6. Applies policy based on classification
+
+### Classification types
+
+| Type | When | Devin invoked? |
+|------|------|----------------|
+| `CODE_FAILURE` | `failure` + strong code/test signals (pytest, lint, build, etc.) | Yes — same session |
+| `TRANSIENT_FAILURE` | `cancelled`, `timed_out`, `stale` (takes precedence over check name) | No |
+| `INFRA_FAILURE` | `startup_failure` or strong infrastructure signals | No |
+| `UNKNOWN` | Insufficient evidence (e.g. bare `failure`, `action_required`) | No |
+
+Example: **Python Unit Tests + `cancelled`** (tests passed but workflow cancelled) → `TRANSIENT_FAILURE`, not `CODE_FAILURE`.
+
+### Same-session repair
+
+For `CODE_FAILURE` only, when `DEVIN_LIVE_ENABLED=true` and `task.devin_session_id` exists:
+
+- Sends `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` to the **existing** session
+- Never creates a new Devin session for CI repair
+- Bounded by `MAX_CI_REPAIR_ATTEMPTS` (default **2**)
+- Exceeding the limit → `ESCALATED`
+
+Non-code failures are recorded and observed. After `MAX_CI_NON_CODE_FAILURES` (default **3**) repeated non-code failures, the task escalates without invoking Devin.
+
+### CI metadata on tasks
+
+Stored separately from workflow status: `failure_type`, `ci_check_name`, `ci_conclusion`, `ci_classification_reason`, `ci_repair_attempts`, `last_ci_check_run_id`, `ci_repair_verified_at`.
+
+### Example CI failure lifecycle
+
+```
+Issue labeled → Devin session → PR opened → CI fails (pytest)
+  → CODE_FAILURE classified → send_message(same session)
+  → Devin fixes PR → CI reruns → check_run success
+  → ci_repair_verified_at set (repair success requires GitHub evidence)
+```
+
+### Real GitHub validation
+
+1. Subscribe the repo webhook to **Check runs** (in addition to Issues and Pull requests)
+2. Expose the backend via ngrok or Cloudflare tunnel
+3. Trigger a real CI failure on a Devin PR
+4. Confirm classification, metadata persistence, and same-session repair in logs/dashboard
+
+Do not manufacture fake production failures if a real one is not available — local fixtures are sufficient for automated tests.
+
 ## Task Lifecycle
 
 | Status | Meaning |
@@ -282,8 +358,8 @@ A matching remediation task (same repo + PR URL) must exist for PR webhooks to u
 | `SESSION_CREATED` | Devin session created |
 | `RUNNING` | Devin actively working |
 | `PR_OPENED` | Pull request created |
-| `CI_FAILED` | CI failed on PR |
-| `READY_FOR_REVIEW` | CI passed, awaiting human review |
+| `CI_FAILED` | Legacy enum value; Phase 3 uses CI metadata fields instead |
+| `READY_FOR_REVIEW` | Devin finished, PR awaiting human review |
 | `MERGED` | PR merged |
 | `FAILED` | Unrecoverable failure |
 | `ESCALATED` | Retries/timeout/ACU cap exceeded |
@@ -295,7 +371,8 @@ The dashboard and `GET /api/metrics` expose:
 - Success rate, merge rate
 - Median MTTR (merged tasks only)
 - 7-day throughput
-- CI recovery rate
+- CI recovery rate, tasks with CI failures, repair attempts/successes
+- CI failure breakdown (code / transient / infra / unknown)
 - Total / average ACU
 - Tasks with PRs
 - Active, failed, escalated task counts
@@ -315,7 +392,9 @@ All metrics are computed from real database state—empty when no tasks exist. M
 - `MAX_RETRIES` with escalation
 - `DEVIN_SESSION_TIMEOUT_MINUTES`
 - Optional `MAX_ACU_PER_TASK` and `DAILY_ACU_CAP`
-- Webhook deduplication via `X-GitHub-Delivery`
+- Webhook deduplication via `X-GitHub-Delivery` and `check_run.id`
+- `MAX_CI_REPAIR_ATTEMPTS` (default 2) for same-session CI repair
+- `MAX_CI_NON_CODE_FAILURES` (default 3) before escalation on infra/transient/unknown
 
 ## Phase 1 Status
 
@@ -405,18 +484,39 @@ All metrics are computed from real database state—empty when no tasks exist. M
 | Devin execution | Devin V3 session poll | `running`, `exit`, `suspended` |
 | GitHub PR state | GitHub `pull_request` webhooks | `open`, `closed`, `merged` |
 
-**Not yet implemented (Phase 3):**
+**Not yet implemented (Phase 4+):**
 
-- CI `check_run` / `workflow_run` webhooks and `CI_FAILED` transitions
-- CI failure classification and same-session `send_message` self-correction
 - Scheduled Devin sessions
+- Playbooks and Analytics API integration
+- Automatic PR merge
+
+## Phase 3 Status
+
+**Implemented:**
+
+- GitHub `check_run` webhook ingestion with HMAC verification and delivery deduplication
+- `CiCheckRunEvent` normalization and deterministic failure classifier
+- CI → PR → remediation task association
+- CI metadata persistence on `remediation_tasks`
+- Same-session Devin `send_message` for `CODE_FAILURE` only (background execution)
+- Repair attempt tracking with `MAX_CI_REPAIR_ATTEMPTS`
+- Escalation for max repair attempts and repeated non-code failures
+- Dashboard CI metadata display
+- Honest CI metrics (`ci_repair_successes` requires subsequent successful check_run)
+- 37+ new tests (147 total backend tests)
+
+**Previously listed as Phase 3 — now implemented:**
+
+- CI `check_run` webhooks and failure classification
+- Same-session `send_message` self-correction loop
 
 ## Known Limitations
 
 - `DEVIN_LIVE_ENABLED` defaults to `false` to prevent accidental ACU spend
 - A PR webhook received before Devin polling persists the task's PR URL is safely ignored
 - Post-merge comment/close requires `GITHUB_TOKEN`; API failures are logged, not auto-retried
-- CI recovery rate uses simplified heuristics without full status history
+- CI repair success is verified only when a subsequent successful `check_run` webhook arrives
+- `check_run` association requires `pull_requests[0]` in the webhook payload
 - Database schema is managed with Alembic (`make migrate` or auto-run on backend startup)
 
 ## Future Extensions

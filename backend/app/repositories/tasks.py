@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -176,3 +176,45 @@ class TaskRepository:
     def list_all(self) -> list[RemediationTask]:
         stmt = select(RemediationTask).order_by(RemediationTask.created_at.desc())
         return list(self.db.scalars(stmt).all())
+
+    def try_claim_check_run(self, task_id: int, check_run_id: int) -> bool:
+        """Atomically claim a check_run for processing. Returns False if already processed."""
+        now = datetime.now(UTC)
+        stmt = (
+            update(RemediationTask)
+            .where(
+                RemediationTask.id == task_id,
+                or_(
+                    RemediationTask.last_ci_check_run_id.is_(None),
+                    RemediationTask.last_ci_check_run_id != check_run_id,
+                ),
+            )
+            .values(last_ci_check_run_id=check_run_id, updated_at=now)
+        )
+        result = self.db.execute(stmt)
+        self.db.commit()
+        return result.rowcount == 1
+
+    def claim_ci_repair_attempt(
+        self, task_id: int, check_run_id: int, max_attempts: int
+    ) -> RemediationTask | None:
+        """Atomically increment CI repair attempts if under limit."""
+        now = datetime.now(UTC)
+        stmt = (
+            update(RemediationTask)
+            .where(
+                RemediationTask.id == task_id,
+                RemediationTask.ci_repair_attempts < max_attempts,
+                RemediationTask.last_ci_check_run_id == check_run_id,
+            )
+            .values(
+                ci_repair_attempts=RemediationTask.ci_repair_attempts + 1,
+                ci_repair_message_sent_at=now,
+                updated_at=now,
+            )
+        )
+        result = self.db.execute(stmt)
+        self.db.commit()
+        if result.rowcount != 1:
+            return None
+        return self.get_by_id(task_id)

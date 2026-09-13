@@ -59,7 +59,11 @@ flowchart TB
   ORCH --> Devin[Devin V3]
   Devin --> PR[GitHub PR]
   PR -->|pull_request webhook| WH2[Webhook Handler]
+  PR -->|check_run webhook| WH3[CI Handler]
+  WH3 --> Classifier[Failure Classifier]
+  Classifier -->|CODE_FAILURE| Devin
   WH2 --> ORCH
+  WH3 --> ORCH
   ORCH --> Metrics[Metrics / Dashboard]
   ORCH -->|GITHUB_TOKEN| IssueActions[Issue Comment / Close]
 ```
@@ -93,6 +97,7 @@ stateDiagram-v2
   SESSION_CREATED --> RUNNING: session active
   RUNNING --> PR_OPENED: PR created
   PR_OPENED --> READY_FOR_REVIEW: Devin exit + PR
+  note right of PR_OPENED: CI metadata stored separately\nworkflow status unchanged on CI fail
   READY_FOR_REVIEW --> MERGED: GitHub pull_request merged
   PR_OPENED --> ESCALATED: PR closed without merge
   READY_FOR_REVIEW --> ESCALATED: PR closed without merge
@@ -100,7 +105,7 @@ stateDiagram-v2
   RUNNING --> ESCALATED: retries/timeout/ACU cap
 ```
 
-Phase 3 (not implemented): `CI_FAILED` transitions and Devin `send_message` self-correction loop.
+Phase 3: CI failure metadata is stored on the task without transitioning workflow `status` to `CI_FAILED`. The legacy `CI_FAILED` enum value remains for compatibility but is unused in Phase 3 logic.
 
 ## Status Authority
 
@@ -109,6 +114,7 @@ Phase 3 (not implemented): `CI_FAILED` transitions and Devin `send_message` self
 | Workflow progress | Orchestrator | `status` |
 | Agent execution | Devin V3 session poll | `devin_status`, `devin_status_detail` |
 | PR / merge state | GitHub `pull_request` webhooks | `pr_url`, `pr_state`, `merged_at` |
+| CI failure state | GitHub `check_run` webhooks + classifier | `failure_type`, `ci_check_name`, `ci_conclusion`, `ci_repair_attempts`, etc. |
 
 Devin PR state from session polling is superseded by GitHub webhook data for `pr_state`.
 
@@ -120,7 +126,7 @@ Verified V3 endpoints (see [Devin API docs](https://docs.devin.ai/api-reference/
 
 - `POST /v3/organizations/{org_id}/sessions` — create session
 - `GET /v3/organizations/{org_id}/sessions/{devin_id}` — get session
-- `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — send follow-up (Phase 3)
+- `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — same-session CI repair (Phase 3)
 
 Live calls gated by `DEVIN_LIVE_ENABLED=false` by default.
 
@@ -142,6 +148,39 @@ Supported events:
 |-------|---------|--------|
 | `issues` | `labeled` + `devin-remediate` | Create remediation task, async Devin dispatch |
 | `pull_request` | `opened`, `reopened`, `synchronize`, `closed` | Update PR metadata, merge lifecycle |
+| `check_run` | `completed` + failure-like conclusion | Classify CI failure, persist metadata, optional same-session repair |
+
+### check_run processing
+
+```mermaid
+flowchart TB
+  CR[check_run webhook] --> Verify[HMAC + delivery dedup]
+  Verify --> Filter[Terminal failure-like only]
+  Filter --> Assoc[PR to RemediationTask]
+  Assoc -->|no match| NoTask[no_matching_task]
+  Assoc -->|match| Dedup[check_run.id dedup]
+  Dedup --> Classify[FailureClassifier]
+  Classify --> Persist[CI metadata]
+  Persist --> Policy{failure_type}
+  Policy -->|CODE_FAILURE| Repair[same-session send_message]
+  Policy -->|INFRA/TRANSIENT/UNKNOWN| Observe[record + escalate if repeated]
+  Repair --> BG[BackgroundTasks]
+```
+
+**Classification precedence:**
+
+1. `cancelled` / `timed_out` / `stale` → `TRANSIENT_FAILURE`
+2. `startup_failure` or infrastructure signals → `INFRA_FAILURE`
+3. `failure` + code/test signals → `CODE_FAILURE`
+4. Otherwise → `UNKNOWN`
+
+**Trust boundaries:** Classification is deterministic (no LLM). Devin is invoked only for `CODE_FAILURE` when `devin_session_id` exists and `DEVIN_LIVE_ENABLED=true`.
+
+**Deduplication:** `X-GitHub-Delivery` (webhook-level) + `last_ci_check_run_id` (task-level).
+
+**Repair limits:** `MAX_CI_REPAIR_ATTEMPTS` (default 2). Exceeding → `ESCALATED`.
+
+**Audit trail:** `failure_type`, `ci_classification_reason`, `ci_check_name`, `ci_conclusion`, `ci_failure_at`, `ci_repair_attempts`, `ci_repair_message_sent_at`, `ci_repair_verified_at`.
 
 ### Deduplication
 
@@ -189,15 +228,18 @@ Uses `GITHUB_TOKEN` (Orchestrator → GitHub). Separate from Devin's GitHub inte
 - `github_webhook_deliveries` — webhook idempotency log
 - Failed and escalated tasks are never auto-deleted
 
-## CI Self-Correction Design (Phase 3 — not implemented)
+## CI Self-Correction (Phase 3)
 
 When CI fails on a Devin-opened PR:
 
-1. Orchestrator detects failure (`check_run` webhook)
-2. Task transitions to `CI_FAILED`
-3. Orchestrator sends CI logs to the **same** Devin session via `send_message`
-4. Devin diagnoses and pushes a fix
-5. CI reruns; loop until pass or escalation
+1. Orchestrator receives `check_run` webhook and classifies failure
+2. CI metadata persisted; workflow `status` unchanged
+3. For `CODE_FAILURE`: sends CI context to the **same** Devin session via `send_message` (background)
+4. Devin diagnoses and pushes a fix to the existing PR
+5. Subsequent successful `check_run` sets `ci_repair_verified_at`
+6. Loop bounded by `MAX_CI_REPAIR_ATTEMPTS`; non-code failures escalate after `MAX_CI_NON_CODE_FAILURES`
+
+Repair success is **not** inferred from `send_message` ACK — only from subsequent GitHub check evidence.
 
 ## Observability Metrics
 
@@ -207,7 +249,10 @@ When CI fails on a Devin-opened PR:
 | Merge Rate | `MERGED / total tasks` (GitHub-verified merges only) |
 | Median MTTR | Median of `(merged_at - started_at)` for `MERGED` tasks only |
 | Throughput | Tasks created in last 7 days |
-| CI Recovery Rate | Heuristic based on `retry_count` (Phase 3 will improve) |
+| CI Recovery Rate | `ci_repair_verified_at` tasks / tasks with `ci_failure_at` |
+| CI Failure Breakdown | Counts by `failure_type` |
+| CI Repair Attempts | Sum of `ci_repair_attempts` |
+| CI Repair Successes | Tasks with `ci_repair_verified_at` set |
 | Total ACU | Sum of `acu_used` across tasks |
 | Active Sessions | Tasks in `SESSION_CREATED`, `RUNNING`, `PR_OPENED`, `CI_FAILED` |
 
@@ -218,11 +263,12 @@ When CI fails on a Devin-opened PR:
 - Session timeout → `ESCALATED`
 - ACU budget exceeded → `ESCALATED`
 - PR closed without merge → `ESCALATED`
+- CI repair attempts exceeded → `ESCALATED`
+- Repeated non-code CI failures → `ESCALATED`
 - Post-merge GitHub API failures: log, preserve `MERGED` status
 
 ## Future Extension Points
 
-- CI self-correction (Phase 3)
 - Additional event sources (Jira, Linear, security scanners)
 - Multi-repository rollout
 - Policy-based approval gates

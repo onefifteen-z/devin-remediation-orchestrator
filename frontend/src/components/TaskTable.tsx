@@ -7,6 +7,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { formatCiRepairLine } from "@/lib/ci"
 import {
   extractPrNumber,
   formatDevinExecution,
@@ -42,6 +43,13 @@ export function TaskTable({ tasks }: TaskTableProps) {
           const devinAlert = getDevinAlert(task.devin_status, task.devin_status_detail)
           const prNumber = task.pr_url ? extractPrNumber(task.pr_url) : null
           const prState = formatPrState(task.pr_state)
+          const ciLine = formatCiRepairLine(
+            task.ci_check_name,
+            task.ci_conclusion,
+            task.failure_type,
+            task.ci_repair_attempts,
+            task.max_ci_repair_attempts,
+          )
 
           return (
             <TableRow key={task.id}>
@@ -98,6 +106,9 @@ export function TaskTable({ tasks }: TaskTableProps) {
                     </a>
                     {prState && (
                       <p className="text-xs text-muted-foreground">{prState}</p>
+                    )}
+                    {ciLine && (
+                      <p className="mt-0.5 text-xs text-muted-foreground">CI: {ciLine}</p>
                     )}
                   </div>
                 ) : (

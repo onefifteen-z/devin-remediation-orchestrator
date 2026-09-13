@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654324,
+    "name": "Build",
+    "status": "completed",
+    "conclusion": "startup_failure",
+    "html_url": "https://github.com/owner/superset/runs/987654324",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "Runner failure",
+      "summary": "The runner unavailable error occurred during setup."
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

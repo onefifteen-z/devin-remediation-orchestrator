@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654322,
+    "name": "Python Unit Tests",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "html_url": "https://github.com/owner/superset/runs/987654322",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "The operation was canceled.",
+      "summary": "15138 passed, 5 skipped, 2 xfailed"
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

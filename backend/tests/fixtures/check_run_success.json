@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654325,
+    "name": "Python Unit Tests",
+    "status": "completed",
+    "conclusion": "success",
+    "html_url": "https://github.com/owner/superset/runs/987654325",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "All tests passed",
+      "summary": "15138 passed, 5 skipped, 2 xfailed"
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

@@ -6,13 +6,17 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db, get_session_factory
+from app.repositories.tasks import TaskRepository
 from app.repositories.webhook_deliveries import WebhookDeliveryAlreadyProcessedError
 from app.schemas.github_events import (
     REMEDIATE_LABEL,
     normalize_issue_event,
     normalize_pull_request_event,
 )
+from app.schemas.ci import normalize_check_run_event
 from app.schemas.task import RemediationEvent, TaskResponse
+from app.services.ci_handler import CiFailureHandler
+from app.services.devin import DevinClient
 from app.services.orchestration import RemediationOrchestrator
 from app.utils.security import verify_github_signature
 
@@ -50,6 +54,43 @@ async def _post_merge_actions_background(task_id: int) -> None:
         await orchestrator.post_merge_github_actions(task_id)
     except Exception:
         logger.exception("Post-merge GitHub actions failed", extra={"task_id": task_id})
+    finally:
+        db.close()
+
+
+async def _send_ci_repair_message_background(task_id: int, message: str) -> None:
+    db = get_session_factory()()
+    try:
+        settings = get_settings()
+        repo = TaskRepository(db)
+        task = repo.get_by_id(task_id)
+        if not task or not task.devin_session_id:
+            logger.error(
+                "CI repair message skipped: missing task or session",
+                extra={"task_id": task_id},
+            )
+            return
+
+        devin_client = DevinClient(settings)
+        try:
+            await devin_client.send_message(task.devin_session_id, message)
+            logger.info(
+                "CI repair message sent",
+                extra={
+                    "task_id": task_id,
+                    "devin_session_id": task.devin_session_id,
+                },
+            )
+        except Exception:
+            logger.exception(
+                "CI repair message failed",
+                extra={
+                    "task_id": task_id,
+                    "devin_session_id": task.devin_session_id,
+                },
+            )
+        finally:
+            await devin_client.close()
     finally:
         db.close()
 
@@ -137,6 +178,40 @@ def _handle_pull_request_event(
     return response, 200
 
 
+def _handle_check_run_event(
+    db: Session,
+    settings: Settings,
+    delivery_id: str,
+    payload: dict,
+    background_tasks: BackgroundTasks,
+) -> tuple[dict, int]:
+    event = normalize_check_run_event(delivery_id, payload)
+    handler = CiFailureHandler(db, settings)
+    result = handler.handle(event)
+
+    orchestrator = RemediationOrchestrator(db, settings)
+    orchestrator.webhook_repo.record(
+        delivery_id,
+        event_type="check_run",
+        action=event.action,
+        repository=event.repository,
+        task_id=result.task_id,
+        outcome=result.outcome,
+    )
+
+    if result.repair_message and result.task_id is not None:
+        background_tasks.add_task(
+            _send_ci_repair_message_background,
+            result.task_id,
+            result.repair_message,
+        )
+
+    response: dict = {"outcome": result.outcome}
+    if result.task_id is not None:
+        response["task_id"] = result.task_id
+    return response, 200
+
+
 @router.post("/github")
 async def github_webhook(
     request: Request,
@@ -179,6 +254,10 @@ async def github_webhook(
         elif event_type == "pull_request":
             response_body, status_code = _handle_pull_request_event(
                 orchestrator, x_github_delivery, payload, background_tasks
+            )
+        elif event_type == "check_run":
+            response_body, status_code = _handle_check_run_event(
+                db, settings, x_github_delivery, payload, background_tasks
             )
         else:
             orchestrator.webhook_repo.record(

@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.models.task import ACTIVE_STATUSES, TERMINAL_STATUSES, RemediationTask, TaskStatus
 from app.repositories.tasks import TaskRepository
+from app.schemas.ci import FailureType
 from app.schemas.metrics import MetricsResponse, ThroughputPoint
 
 
@@ -40,13 +41,7 @@ class MetricsService:
         )
         throughput_by_day = _throughput_by_day(tasks, days=7)
 
-        ci_failed_tasks = [t for t in tasks if _ever_ci_failed(t)]
-        ci_recovered = [
-            t
-            for t in ci_failed_tasks
-            if t.status in {TaskStatus.READY_FOR_REVIEW, TaskStatus.MERGED}
-        ]
-        ci_recovery_rate = len(ci_recovered) / len(ci_failed_tasks) if ci_failed_tasks else 0.0
+        ci_metrics = _compute_ci_metrics(tasks)
 
         acu_values = [t.acu_used for t in tasks if t.acu_used is not None]
         total_acu = sum(acu_values)
@@ -60,13 +55,53 @@ class MetricsService:
             median_mttr_seconds=median_mttr,
             throughput_7d=throughput_7d,
             throughput_by_day=throughput_by_day,
-            ci_recovery_rate=round(ci_recovery_rate, 4),
+            ci_recovery_rate=ci_metrics["ci_recovery_rate"],
+            tasks_with_ci_failures=ci_metrics["tasks_with_ci_failures"],
+            code_ci_failures=ci_metrics["code_ci_failures"],
+            transient_ci_failures=ci_metrics["transient_ci_failures"],
+            infra_ci_failures=ci_metrics["infra_ci_failures"],
+            unknown_ci_failures=ci_metrics["unknown_ci_failures"],
+            ci_repair_attempts=ci_metrics["ci_repair_attempts"],
+            ci_repair_successes=ci_metrics["ci_repair_successes"],
             total_acu=round(total_acu, 2),
             average_acu_per_task=round(average_acu, 2),
             tasks_with_prs=tasks_with_prs,
             failed_tasks=failed,
             escalated_tasks=escalated,
         )
+
+
+def _compute_ci_metrics(tasks: list[RemediationTask]) -> dict:
+    tasks_with_ci_failures = [t for t in tasks if t.ci_failure_at is not None]
+    ci_repair_successes = sum(
+        1 for t in tasks_with_ci_failures if t.ci_repair_verified_at is not None
+    )
+    ci_recovery_rate = (
+        ci_repair_successes / len(tasks_with_ci_failures)
+        if tasks_with_ci_failures
+        else 0.0
+    )
+
+    return {
+        "tasks_with_ci_failures": len(tasks_with_ci_failures),
+        "code_ci_failures": sum(
+            1 for t in tasks_with_ci_failures if t.failure_type == FailureType.CODE_FAILURE.value
+        ),
+        "transient_ci_failures": sum(
+            1
+            for t in tasks_with_ci_failures
+            if t.failure_type == FailureType.TRANSIENT_FAILURE.value
+        ),
+        "infra_ci_failures": sum(
+            1 for t in tasks_with_ci_failures if t.failure_type == FailureType.INFRA_FAILURE.value
+        ),
+        "unknown_ci_failures": sum(
+            1 for t in tasks_with_ci_failures if t.failure_type == FailureType.UNKNOWN.value
+        ),
+        "ci_repair_attempts": sum(t.ci_repair_attempts for t in tasks),
+        "ci_repair_successes": ci_repair_successes,
+        "ci_recovery_rate": round(ci_recovery_rate, 4),
+    }
 
 
 def _median(values: list[float]) -> float:
@@ -98,15 +133,3 @@ def _throughput_by_day(tasks: list[RemediationTask], days: int) -> list[Throughp
             counts[key] += 1
 
     return [ThroughputPoint(date=date, count=count) for date, count in counts.items()]
-
-
-def _ever_ci_failed(task: RemediationTask) -> bool:
-    return task.status in {
-        TaskStatus.CI_FAILED,
-        TaskStatus.READY_FOR_REVIEW,
-        TaskStatus.MERGED,
-    } and (
-        task.status == TaskStatus.CI_FAILED
-        or task.retry_count > 0
-        or task.status in {TaskStatus.READY_FOR_REVIEW, TaskStatus.MERGED}
-    )

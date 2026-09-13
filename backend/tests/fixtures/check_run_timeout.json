@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654323,
+    "name": "CI",
+    "status": "completed",
+    "conclusion": "timed_out",
+    "html_url": "https://github.com/owner/superset/runs/987654323",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "Job timed out",
+      "summary": "The job running on runner has exceeded the maximum execution time."
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

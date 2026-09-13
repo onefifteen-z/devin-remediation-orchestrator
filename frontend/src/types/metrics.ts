@@ -12,6 +12,13 @@ export interface Metrics {
   throughput_7d: number
   throughput_by_day: ThroughputPoint[]
   ci_recovery_rate: number
+  tasks_with_ci_failures: number
+  code_ci_failures: number
+  transient_ci_failures: number
+  infra_ci_failures: number
+  unknown_ci_failures: number
+  ci_repair_attempts: number
+  ci_repair_successes: number
   total_acu: number
   average_acu_per_task: number
   tasks_with_prs: number

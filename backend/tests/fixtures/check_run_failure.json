@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654321,
+    "name": "Python Unit Tests",
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/owner/superset/runs/987654321",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "pytest failed",
+      "summary": "FAILED tests/unit/test_example.py::test_foo - AssertionError"
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

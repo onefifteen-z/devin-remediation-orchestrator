@@ -56,6 +56,21 @@ class TaskResponse(BaseModel):
     merged_at: datetime | None
     failure_reason: str | None
     escalation_reason: str | None
+    failure_type: str | None = None
+    ci_classification_reason: str | None = None
+    ci_check_name: str | None = None
+    ci_check_url: str | None = None
+    ci_conclusion: str | None = None
+    ci_failure_at: datetime | None = None
+    ci_repair_attempts: int = 0
+    max_ci_repair_attempts: int = Field(
+        default=2,
+        description="Maximum Devin CI repair attempts allowed for this task.",
+    )
+    last_ci_check_run_id: int | None = None
+    ci_repair_message_sent_at: datetime | None = None
+    ci_repair_verified_at: datetime | None = None
+    ci_non_code_failure_count: int = 0
     acu_used: float | None
     created_at: datetime
     updated_at: datetime
@@ -66,7 +81,7 @@ class TaskResponse(BaseModel):
     )
 
     @classmethod
-    def from_orm_task(cls, task) -> "TaskResponse":
+    def from_orm_task(cls, task, max_ci_repair_attempts: int = 2) -> "TaskResponse":
         mttr = None
         if task.merged_at and task.started_at:
             mttr = (task.merged_at - task.started_at).total_seconds()
@@ -95,6 +110,18 @@ class TaskResponse(BaseModel):
             merged_at=task.merged_at,
             failure_reason=task.failure_reason,
             escalation_reason=task.escalation_reason,
+            failure_type=task.failure_type,
+            ci_classification_reason=task.ci_classification_reason,
+            ci_check_name=task.ci_check_name,
+            ci_check_url=task.ci_check_url,
+            ci_conclusion=task.ci_conclusion,
+            ci_failure_at=task.ci_failure_at,
+            ci_repair_attempts=task.ci_repair_attempts,
+            max_ci_repair_attempts=max_ci_repair_attempts,
+            last_ci_check_run_id=task.last_ci_check_run_id,
+            ci_repair_message_sent_at=task.ci_repair_message_sent_at,
+            ci_repair_verified_at=task.ci_repair_verified_at,
+            ci_non_code_failure_count=task.ci_non_code_failure_count,
             acu_used=task.acu_used,
             created_at=task.created_at,
             updated_at=task.updated_at,

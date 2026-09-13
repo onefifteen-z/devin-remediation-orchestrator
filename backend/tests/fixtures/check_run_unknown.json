@@ -1,0 +1,30 @@
+{
+  "action": "completed",
+  "check_run": {
+    "id": 987654326,
+    "name": "Deploy Preview",
+    "status": "completed",
+    "conclusion": "failure",
+    "html_url": "https://github.com/owner/superset/runs/987654326",
+    "head_sha": "abc123def456",
+    "output": {
+      "title": "Deployment failed",
+      "summary": "Unknown deployment error without diagnostics."
+    },
+    "pull_requests": [
+      {
+        "number": 123,
+        "head": {
+          "ref": "fix-mcp-backend",
+          "sha": "abc123def456"
+        },
+        "base": {
+          "ref": "master"
+        }
+      }
+    ]
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}
