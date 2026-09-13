@@ -5,6 +5,8 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.schemas.devin_consumption import ConsumptionResponse, parse_consumption_response
+from app.schemas.devin_schedule import ScheduleResponse, parse_schedule_response
 from app.schemas.devin_session import DevinSessionResponse, parse_devin_session_response
 
 logger = logging.getLogger(__name__)
@@ -81,12 +83,37 @@ class DevinClient:
             raw=data,
         )
 
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        client = await self._get_client()
+        try:
+            response = await client.request(method, path, json=json, params=params)
+        except httpx.TimeoutException:
+            raise DevinAPIError("Devin API request timed out") from None
+
+        if response.status_code >= 400:
+            self._handle_error(response)
+
+        try:
+            return response.json()
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
     async def create_session(
         self,
         prompt: str,
         tags: list[str] | None = None,
         max_acu_limit: int | None = None,
         repos: list[str] | None = None,
+        structured_output_schema: dict[str, Any] | None = None,
+        structured_output_required: bool = True,
+        playbook_id: str | None = None,
     ) -> DevinSessionResult:
         body: dict[str, Any] = {"prompt": prompt}
         if tags:
@@ -95,20 +122,13 @@ class DevinClient:
             body["max_acu_limit"] = max_acu_limit
         if repos:
             body["repos"] = repos
+        if structured_output_schema is not None:
+            body["structured_output_schema"] = structured_output_schema
+            body["structured_output_required"] = structured_output_required
+        if playbook_id:
+            body["playbook_id"] = playbook_id
 
-        client = await self._get_client()
-        try:
-            response = await client.post(self._org_path("/sessions"), json=body)
-        except httpx.TimeoutException:
-            raise DevinAPIError("Devin API request timed out") from None
-
-        if response.status_code >= 400:
-            self._handle_error(response)
-
-        try:
-            data = response.json()
-        except ValueError:
-            raise DevinAPIError("Malformed Devin API response") from None
+        data = await self._request_json("POST", self._org_path("/sessions"), json=body)
 
         if "session_id" not in data or "url" not in data:
             raise DevinAPIError("Malformed Devin API response")
@@ -120,20 +140,7 @@ class DevinClient:
         return self._parse_session(data)
 
     async def get_session(self, devin_id: str) -> DevinSessionResponse:
-        client = await self._get_client()
-        try:
-            response = await client.get(self._org_path(f"/sessions/{devin_id}"))
-        except httpx.TimeoutException:
-            raise DevinAPIError("Devin API request timed out") from None
-
-        if response.status_code >= 400:
-            self._handle_error(response)
-
-        try:
-            data = response.json()
-        except ValueError:
-            raise DevinAPIError("Malformed Devin API response") from None
-
+        data = await self._request_json("GET", self._org_path(f"/sessions/{devin_id}"))
         try:
             session = parse_devin_session_response(data)
         except ValueError:
@@ -150,11 +157,78 @@ class DevinClient:
         return session
 
     async def send_message(self, devin_id: str, message: str) -> DevinSessionResult:
-        client = await self._get_client()
-        response = await client.post(
+        data = await self._request_json(
+            "POST",
             self._org_path(f"/sessions/{devin_id}/messages"),
             json={"message": message},
         )
-        if response.status_code >= 400:
-            self._handle_error(response)
-        return self._parse_session(response.json())
+        return self._parse_session(data)
+
+    async def get_session_consumption(
+        self,
+        session_id: str,
+        time_after: int | None = None,
+        time_before: int | None = None,
+    ) -> ConsumptionResponse:
+        params: dict[str, Any] = {}
+        if time_after is not None:
+            params["time_after"] = time_after
+        if time_before is not None:
+            params["time_before"] = time_before
+        data = await self._request_json(
+            "GET",
+            self._org_path(f"/consumption/daily/sessions/{session_id}"),
+            params=params or None,
+        )
+        try:
+            return parse_consumption_response(data)
+        except Exception:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_consumption_daily(
+        self,
+        time_after: int | None = None,
+        time_before: int | None = None,
+    ) -> ConsumptionResponse:
+        params: dict[str, Any] = {}
+        if time_after is not None:
+            params["time_after"] = time_after
+        if time_before is not None:
+            params["time_before"] = time_before
+        data = await self._request_json(
+            "GET",
+            self._org_path("/consumption/daily"),
+            params=params or None,
+        )
+        try:
+            return parse_consumption_response(data)
+        except Exception:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def create_schedule(self, body: dict[str, Any]) -> ScheduleResponse:
+        data = await self._request_json("POST", self._org_path("/schedules"), json=body)
+        try:
+            return parse_schedule_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_schedule(self, schedule_id: str) -> ScheduleResponse:
+        data = await self._request_json(
+            "GET",
+            self._org_path(f"/schedules/{schedule_id}"),
+        )
+        try:
+            return parse_schedule_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def update_schedule(self, schedule_id: str, body: dict[str, Any]) -> ScheduleResponse:
+        data = await self._request_json(
+            "PATCH",
+            self._org_path(f"/schedules/{schedule_id}"),
+            json=body,
+        )
+        try:
+            return parse_schedule_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None

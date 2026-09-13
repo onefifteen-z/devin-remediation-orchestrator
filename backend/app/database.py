@@ -47,6 +47,17 @@ PHASE_3_CI_COLUMNS = {
 
 PHASE_5_TRIGGER_SOURCE_COLUMNS = {"trigger_source"}
 
+PHASE_5_ADVANCED_COLUMNS = {
+    "remediation_outcome",
+    "root_cause",
+    "implementation_summary",
+    "structured_result_json",
+    "blocker",
+    "playbook_id",
+    "acu_source",
+    "acu_verified",
+}
+
 
 def get_engine():
     global _engine
@@ -100,7 +111,17 @@ def _upgrade_database(engine, database_url: str) -> None:
             )
             has_phase_3_ci = PHASE_3_CI_COLUMNS.issubset(columns)
             has_trigger_source = PHASE_5_TRIGGER_SOURCE_COLUMNS.issubset(columns)
+            has_phase_5_advanced = PHASE_5_ADVANCED_COLUMNS.issubset(columns)
             if (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+                and has_phase_5_advanced
+            ):
+                baseline = "0006"
+            elif (
                 has_phase_2b
                 and PHASE_2C_COLUMNS.issubset(columns)
                 and has_webhook_deliveries

@@ -156,6 +156,12 @@ without deleting its existing data.
 | `DEVIN_POLL_MAX_FAILURES` | Consecutive poll failures before escalation (default: 10) |
 | `MAX_ACU_PER_TASK` | Per-task ACU cap (optional) |
 | `DAILY_ACU_CAP` | Daily ACU cap (optional) |
+| `DEVIN_REMEDIATION_PLAYBOOK_ID` | Optional Devin playbook ID for remediation sessions |
+| `DEVIN_SCHEDULED_ENABLED` | Enable native Devin schedule registration (`false` by default) |
+| `DEVIN_SCHEDULE_CRON` | Cron expression for scheduled intake (default: `0 9 * * 1-5`) |
+| `DEVIN_SCHEDULE_ID` | Existing schedule ID for idempotent updates (optional) |
+| `ORCHESTRATOR_PUBLIC_URL` | Public URL for scheduled intake callback (required when scheduling enabled) |
+| `SCHEDULED_INTAKE_TOKEN` | Optional bearer token for `POST /api/scheduled/intake` |
 | `CORS_ORIGINS` | Comma-separated origins |
 | `LOG_LEVEL` | Logging level |
 
@@ -486,9 +492,91 @@ All metrics are computed from real database state—empty when no tasks exist. M
 
 **Not yet implemented (Phase 4+):**
 
-- Scheduled Devin sessions
-- Playbooks and Analytics API integration
 - Automatic PR merge
+
+## Phase 5 Status — Advanced Devin Integration
+
+**Implemented:**
+
+- Structured output schema on session create (`structured_output_schema`, `structured_output_required`)
+- Typed `RemediationResult` parsing and persistence (`remediation_outcome`, `root_cause`, `implementation_summary`, `blocker`, `structured_result_json`)
+- Playbook support via `DEVIN_REMEDIATION_PLAYBOOK_ID` (optional; prompt-only fallback when unset)
+- Standardized Devin session tags (`workflow`, `source`, `repo`, `issue`, `issue-type`, `environment`)
+- Session consumption API integration (`GET /organizations/{org_id}/consumption/daily/sessions/{session_id}`)
+- ACU source semantics (`acu_source`, `acu_verified`) with final consumption sync on terminal session / merge
+- Organization analytics (`GET /organizations/{org_id}/consumption/daily`) exposed via metrics API
+- Scheduled Devin intake via native Schedules API (`DEVIN_SCHEDULED_ENABLED=false` by default)
+- Dashboard expandable structured result rows and verified ACU display
+
+### Advanced Devin Integration
+
+#### Structured Output
+
+Remediation sessions request a conservative JSON Schema (Draft 7) with:
+
+- `outcome`: `success` | `blocked` | `failed`
+- `root_cause`, `implementation_summary`, `tests_performed[]`, `residual_risks[]`, `blocker`, `pr_url`
+
+Structured output represents Devin's engineering report. It does **not** override GitHub-authoritative merge state. A task becomes `MERGED` only from GitHub merge evidence.
+
+#### Playbook
+
+Create a remediation playbook in Devin UI (Settings → Playbooks) covering the stable engineering process: inspect, reproduce, root cause, fix, tests, lint, regressions, PR, structured result, blockers.
+
+Set `DEVIN_REMEDIATION_PLAYBOOK_ID` to reference it. When unset, the orchestrator uses the existing prompt-based remediation flow.
+
+#### Tags
+
+Every session includes tags such as `workflow=issue-remediation`, `source=github|api|scan|scheduled`, `repo=...`, `issue=...`. Task `trigger_source` remains authoritative.
+
+#### Consumption API
+
+Session-reported `acus_consumed` may be `0.0` even for substantial work. The orchestrator prefers the Consumption API when available:
+
+| `acu_source` | Meaning |
+|--------------|---------|
+| `session_detail` | From `acus_consumed` on session GET (unverified) |
+| `consumption_api` | From `GET .../consumption/daily/sessions/{session_id}` (verified) |
+| `unavailable` | Consumption API not accessible (e.g. missing permission) |
+
+Dashboard shows `3.2 ACU` (verified), `0.0 ACU (reported)` (session only), or `—` (unavailable).
+
+#### Analytics / Metrics
+
+Local DB remains authoritative for merge rate and MTTR. Devin org consumption supplements usage metrics when `ViewOrgConsumption` is available (Enterprise).
+
+#### Scheduled Devin
+
+When `DEVIN_SCHEDULED_ENABLED=true` and `DEVIN_LIVE_ENABLED=true`, the orchestrator registers a native Devin schedule whose session calls `POST /api/scheduled/intake` to scan labeled issues using the same idempotent orchestration path.
+
+Required configuration:
+
+```env
+DEVIN_SCHEDULED_ENABLED=false
+DEVIN_SCHEDULE_CRON=0 9 * * 1-5
+ORCHESTRATOR_PUBLIC_URL=https://your-orchestrator.example.com
+SCHEDULED_INTAKE_TOKEN=optional-bearer-token
+DEVIN_SCHEDULE_ID=optional-existing-schedule-id
+```
+
+#### Required Devin Permissions
+
+| Capability | Permission |
+|------------|------------|
+| Sessions | `UseDevinSessions` (`org.devins.use`) |
+| Consumption / analytics | `ViewOrgConsumption` (Enterprise) |
+| Schedules | `ManageOrgSchedules` |
+
+#### Phase 4 Real-Validation Checklist (manual, post-merge)
+
+1. Label issue `devin-remediate` → GitHub webhook → orchestrator
+2. Verify session has playbook, tags, `structured_output_schema`
+3. Devin produces PR + structured output
+4. CI `check_run` → same-session repair if needed
+5. Merge PR → task `MERGED` from GitHub webhook
+6. Final consumption sync → dashboard shows verified/reported ACU
+7. Dashboard expandable row shows structured result fields
+8. (Separate) Enable `DEVIN_SCHEDULED_ENABLED` → verify schedule registered → intake creates only new tasks
 
 ## Phase 3 Status
 

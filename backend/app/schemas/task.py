@@ -74,6 +74,14 @@ class TaskResponse(BaseModel):
     ci_repair_verified_at: datetime | None = None
     ci_non_code_failure_count: int = 0
     acu_used: float | None
+    acu_source: str | None = None
+    acu_verified: bool = False
+    remediation_outcome: str | None = None
+    root_cause: str | None = None
+    implementation_summary: str | None = None
+    structured_result_json: str | None = None
+    blocker: str | None = None
+    playbook_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -126,6 +134,14 @@ class TaskResponse(BaseModel):
             ci_repair_verified_at=task.ci_repair_verified_at,
             ci_non_code_failure_count=task.ci_non_code_failure_count,
             acu_used=task.acu_used,
+            acu_source=task.acu_source,
+            acu_verified=task.acu_verified,
+            remediation_outcome=task.remediation_outcome,
+            root_cause=task.root_cause,
+            implementation_summary=task.implementation_summary,
+            structured_result_json=task.structured_result_json,
+            blocker=task.blocker,
+            playbook_id=task.playbook_id,
             created_at=task.created_at,
             updated_at=task.updated_at,
             mttr_seconds=mttr,

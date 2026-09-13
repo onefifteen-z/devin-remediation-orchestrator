@@ -1,10 +1,25 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  formatAcuDisplay,
   formatDevinExecutionForTask,
   formatTriggerSource,
   getDevinAlertForTask,
 } from "./devin"
+
+describe("formatAcuDisplay", () => {
+  it("shows verified ACU without qualifier", () => {
+    expect(formatAcuDisplay(3.2, "consumption_api", true)).toBe("3.2 ACU")
+  })
+
+  it("shows reported ACU when unverified", () => {
+    expect(formatAcuDisplay(0.0, "session_detail", false)).toBe("0.0 ACU (reported)")
+  })
+
+  it("shows dash when consumption unavailable", () => {
+    expect(formatAcuDisplay(0.0, "unavailable", false)).toBe("—")
+  })
+})
 
 describe("formatTriggerSource", () => {
   it("maps github_webhook to a readable label", () => {

@@ -3,7 +3,10 @@ import logging
 
 from app.models.task import RemediationTask, TaskStatus
 from app.schemas.devin_session import DevinPullRequest, DevinSessionResponse
-from app.schemas.structured_output import RemediationResult
+from app.schemas.remediation_result import (
+    parse_remediation_result,
+    remediation_result_to_db_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,8 @@ STATUS_ORDER = {
     TaskStatus.FAILED: 6,
     TaskStatus.ESCALATED: 6,
 }
+
+TERMINAL_DEVIN_STATUSES = frozenset({"exit", "error"})
 
 
 def extract_primary_pull_request(
@@ -73,20 +78,23 @@ def extract_devin_audit_fields(session: DevinSessionResponse) -> dict:
     }
     if session.tags:
         fields["devin_tags"] = json.dumps(session.tags)
+    if session.playbook_id:
+        fields["playbook_id"] = session.playbook_id
     return fields
 
 
-def _parse_structured_output(session: DevinSessionResponse) -> RemediationResult | None:
-    if not session.structured_output:
-        return None
-    try:
-        return RemediationResult.model_validate(session.structured_output)
-    except Exception:
-        logger.warning(
-            "Unable to parse Devin structured_output",
-            extra={"devin_session_id": session.session_id},
-        )
-        return None
+def _parse_structured_output(session: DevinSessionResponse):
+    return parse_remediation_result(
+        session.structured_output,
+        devin_session_id=session.session_id,
+    )
+
+
+def extract_structured_result_fields(session: DevinSessionResponse) -> dict:
+    structured = _parse_structured_output(session)
+    if structured is None or session.structured_output is None:
+        return {}
+    return remediation_result_to_db_fields(structured, session.structured_output)
 
 
 def _resolve_exit_status(
@@ -98,9 +106,9 @@ def _resolve_exit_status(
 
     structured = _parse_structured_output(session)
     if structured:
-        if structured.status == "failed":
+        if structured.outcome == "failed":
             return TaskStatus.FAILED
-        if structured.status == "blocked":
+        if structured.outcome == "blocked":
             return TaskStatus.ESCALATED
 
     return TaskStatus.FAILED
@@ -182,6 +190,10 @@ def is_valid_status_transition(current: TaskStatus, target: TaskStatus) -> bool:
     return STATUS_ORDER.get(target, 0) >= STATUS_ORDER.get(current, 0)
 
 
+def is_terminal_devin_status(status: str) -> bool:
+    return status.lower() in TERMINAL_DEVIN_STATUSES
+
+
 def resolve_exit_failure_reason(
     session: DevinSessionResponse,
     pr: tuple[str, str | None] | None,
@@ -192,8 +204,12 @@ def resolve_exit_failure_reason(
     if session.status.lower() == "error":
         return "Devin session reported error status"
     structured = _parse_structured_output(session)
-    if structured and structured.status == "failed":
-        return structured.summary or structured.root_cause or "Devin reported failure"
+    if structured and structured.outcome == "failed":
+        return (
+            structured.implementation_summary
+            or structured.root_cause
+            or "Devin reported failure"
+        )
     if pr is None and session.status.lower() == "exit":
         return "Session exited without pull request"
     return None
@@ -209,6 +225,6 @@ def resolve_exit_escalation_reason(
     if session.status.lower() == "suspended" and detail in SUSPENDED_ESCALATION_DETAILS:
         return f"Devin session suspended: {session.status_detail}"
     structured = _parse_structured_output(session)
-    if structured and structured.status == "blocked":
-        return structured.blocked_reason or "Devin session blocked"
+    if structured and structured.outcome == "blocked":
+        return structured.blocker or "Devin session blocked"
     return None

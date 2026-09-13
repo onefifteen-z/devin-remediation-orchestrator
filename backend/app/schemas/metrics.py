@@ -48,6 +48,22 @@ class MetricsResponse(BaseModel):
     )
     total_acu: float = 0.0
     average_acu_per_task: float = 0.0
+    verified_total_acu: float = Field(
+        default=0.0,
+        description="Sum of acu_used where acu_verified=true.",
+    )
+    average_verified_acu_per_task: float = Field(
+        default=0.0,
+        description="Average acu_used for tasks with acu_verified=true.",
+    )
+    consumption_api_available: bool | None = Field(
+        default=None,
+        description="Whether Devin consumption API was available on last metrics probe.",
+    )
+    devin_org_total_acus: float | None = Field(
+        default=None,
+        description="Organization ACU total from Devin analytics when available.",
+    )
     tasks_with_prs: int = 0
     failed_tasks: int = 0
     escalated_tasks: int = 0

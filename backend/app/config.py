@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     devin_session_poll_interval_seconds: int = 15
     devin_poll_max_failures: int = 10
 
+    devin_remediation_playbook_id: str = ""
+
+    devin_scheduled_enabled: bool = False
+    devin_schedule_cron: str = "0 9 * * 1-5"
+    devin_schedule_id: str = ""
+    orchestrator_public_url: str = ""
+    scheduled_intake_token: str = ""
+
     cors_origins: str = "http://localhost:3000"
     log_level: str = "INFO"
 

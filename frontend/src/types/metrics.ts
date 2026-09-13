@@ -21,6 +21,10 @@ export interface Metrics {
   ci_repair_successes: number
   total_acu: number
   average_acu_per_task: number
+  verified_total_acu: number
+  average_verified_acu_per_task: number
+  consumption_api_available: boolean | null
+  devin_org_total_acus: number | null
   tasks_with_prs: number
   failed_tasks: number
   escalated_tasks: number

@@ -101,6 +101,15 @@ class RemediationTask(Base):
     ci_non_code_failure_count: Mapped[int] = mapped_column(Integer, default=0)
 
     acu_used: Mapped[float | None] = mapped_column(Float, nullable=True)
+    acu_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    acu_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    remediation_outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
+    implementation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    structured_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    blocker: Mapped[str | None] = mapped_column(Text, nullable=True)
+    playbook_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     merge_notification_sent: Mapped[bool] = mapped_column(default=False)
 

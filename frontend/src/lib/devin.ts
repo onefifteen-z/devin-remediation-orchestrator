@@ -109,3 +109,43 @@ export function extractPrNumber(prUrl: string): string | null {
 }
 
 export const terminalTaskStatuses = TERMINAL_TASK_STATUSES
+
+export function formatAcuDisplay(
+  acuUsed: number | null | undefined,
+  acuSource: string | null | undefined,
+  acuVerified: boolean | undefined,
+): string {
+  if (acuSource === "unavailable") {
+    return "—"
+  }
+  if (acuUsed == null) {
+    return "—"
+  }
+  if (acuVerified) {
+    return `${acuUsed.toFixed(1)} ACU`
+  }
+  return `${acuUsed.toFixed(1)} ACU (reported)`
+}
+
+export function parseStructuredResult(
+  structuredResultJson: string | null | undefined,
+): {
+  tests_performed: { command: string; result: string }[]
+  residual_risks: string[]
+} {
+  if (!structuredResultJson) {
+    return { tests_performed: [], residual_risks: [] }
+  }
+  try {
+    const parsed = JSON.parse(structuredResultJson) as {
+      tests_performed?: { command: string; result: string }[]
+      residual_risks?: string[]
+    }
+    return {
+      tests_performed: parsed.tests_performed ?? [],
+      residual_risks: parsed.residual_risks ?? [],
+    }
+  } catch {
+    return { tests_performed: [], residual_risks: [] }
+  }
+}
