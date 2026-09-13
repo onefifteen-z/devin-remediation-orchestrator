@@ -111,13 +111,9 @@ alembic upgrade head          # apply pending migrations
 alembic revision -m "message" # create a new migration (autogenerate: add --autogenerate)
 ```
 
-Migrations run automatically when the backend starts. For an existing database created before Alembic was introduced:
-
-```bash
-cd backend
-alembic stamp 0001            # mark baseline if remediation_tasks already exists
-alembic upgrade head
-```
+Migrations run automatically when the backend starts. A database created before
+Alembic was introduced is detected, stamped at the `0001` baseline, and upgraded
+without deleting its existing data.
 
 ## Backend Environment Variables
 

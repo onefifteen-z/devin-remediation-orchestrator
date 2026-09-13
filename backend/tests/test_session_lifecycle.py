@@ -43,9 +43,9 @@ def _session(status: str, **kwargs) -> DevinSessionResponse:
     ("devin_status", "task_status", "expected"),
     [
         ("new", TaskStatus.RECEIVED, TaskStatus.SESSION_CREATED),
-        ("claimed", TaskStatus.SESSION_CREATED, TaskStatus.SESSION_CREATED),
+        ("claimed", TaskStatus.SESSION_CREATED, None),
         ("running", TaskStatus.SESSION_CREATED, TaskStatus.RUNNING),
-        ("resuming", TaskStatus.RUNNING, TaskStatus.RUNNING),
+        ("resuming", TaskStatus.RUNNING, None),
         ("suspended", TaskStatus.RUNNING, None),
         ("error", TaskStatus.RUNNING, TaskStatus.FAILED),
     ],
