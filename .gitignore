@@ -22,6 +22,7 @@ frontend/dist/
 frontend/.vite/
 
 # IDE / OS
+.cursor/
 .idea/
 .vscode/
 .DS_Store
