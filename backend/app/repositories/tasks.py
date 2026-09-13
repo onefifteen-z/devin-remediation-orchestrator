@@ -100,19 +100,18 @@ class TaskRepository:
         fields["status"] = status
         return self.update_task(task, **fields)
 
-    def claim_task_if_received(
-        self, task_id: int, claimed_status: TaskStatus = TaskStatus.RUNNING
-    ) -> RemediationTask | None:
+    def claim_task_if_received(self, task_id: int) -> RemediationTask | None:
+        """Atomically claim a RECEIVED task for processing without changing status."""
         now = datetime.now(UTC)
         stmt = (
             update(RemediationTask)
             .where(
                 RemediationTask.id == task_id,
                 RemediationTask.status == TaskStatus.RECEIVED,
+                RemediationTask.started_at.is_(None),
             )
             .values(
-                status=claimed_status,
-                started_at=func.coalesce(RemediationTask.started_at, now),
+                started_at=now,
                 updated_at=now,
             )
         )

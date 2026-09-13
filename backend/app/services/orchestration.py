@@ -10,8 +10,9 @@ from app.repositories.tasks import (
     IssueAlreadyTrackedError,
     TaskRepository,
 )
+from app.schemas.remediation import RemediationCreateRequest, RemediationResponse
 from app.schemas.scan import ScanResult
-from app.schemas.task import RemediationEvent, TaskCreate
+from app.schemas.task import RemediationEvent, TaskCreate, TaskResponse
 from app.services.devin import DevinAPIError, DevinClient
 from app.services.github import GitHubClient
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
@@ -33,6 +34,31 @@ def _extract_issue_type(labels: list[dict], remediate_label: str) -> str:
 
 def _issue_key(repository: str, issue_number: int) -> str:
     return f"{repository}#{issue_number}"
+
+
+def _normalize_api_request(request: RemediationCreateRequest) -> RemediationEvent:
+    return RemediationEvent(
+        github_delivery_id=f"api:{request.repository}:{request.issue_number}",
+        github_repository=request.repository,
+        github_issue_number=request.issue_number,
+        github_issue_url=request.issue_url,
+        issue_title=f"Issue #{request.issue_number}",
+        issue_type=request.issue_type,
+    )
+
+
+def _live_mode_message(live_enabled: bool, task: RemediationTask) -> str:
+    if not live_enabled:
+        return "Live Devin execution is disabled (DEVIN_LIVE_ENABLED=false)"
+    if task.devin_session_id:
+        return "Devin session created successfully"
+    if task.failure_reason:
+        return f"Devin session creation failed: {task.failure_reason}"
+    return "Task processed"
+
+
+def _is_active_devin_status(status: str) -> bool:
+    return status.lower() in {"running", "working", "active"}
 
 
 class RemediationOrchestrator:
@@ -77,6 +103,20 @@ class RemediationOrchestrator:
     def handle_webhook_event(self, event: RemediationEvent) -> tuple[RemediationTask, str]:
         return self.ensure_task_for_issue(event)
 
+    async def create_remediation(self, request: RemediationCreateRequest) -> RemediationResponse:
+        event = _normalize_api_request(request)
+        task, outcome = self.ensure_task_for_issue(event)
+        await self.process_task(task.id, reraise_devin_errors=True)
+        refreshed = self.repo.get_by_id(task.id)
+        if refreshed is None:
+            raise RuntimeError(f"Task {task.id} not found after processing")
+        return RemediationResponse(
+            outcome=outcome,
+            devin_live_enabled=self.settings.devin_live_enabled,
+            message=_live_mode_message(self.settings.devin_live_enabled, refreshed),
+            task=TaskResponse.from_orm_task(refreshed),
+        )
+
     async def scan_labeled_issues(self) -> ScanResult:
         repositories = self.settings.github_scan_repositories_list()
         label = self.settings.remediate_label
@@ -106,7 +146,7 @@ class RemediationOrchestrator:
 
         return result
 
-    async def process_task(self, task_id: int) -> None:
+    async def process_task(self, task_id: int, *, reraise_devin_errors: bool = False) -> None:
         task = self.repo.get_by_id(task_id)
         if not task:
             logger.warning("Task not found", extra={"task_id": task_id})
@@ -151,11 +191,7 @@ class RemediationOrchestrator:
                     "max_active_sessions": self.settings.max_active_sessions,
                 },
             )
-            self.transition(
-                claimed_task,
-                TaskStatus.RECEIVED,
-                started_at=None,
-            )
+            self.repo.update_task(claimed_task, started_at=None)
             return
 
         prompt = build_remediation_prompt(claimed_task)
@@ -165,16 +201,22 @@ class RemediationOrchestrator:
             session = await self.devin_client.create_session(
                 prompt=prompt,
                 tags=tags,
+                repos=[claimed_task.github_repository],
                 max_acu_limit=self.settings.max_acu_per_task,
             )
-            self.transition(
+            session_created = self.transition(
                 claimed_task,
                 TaskStatus.SESSION_CREATED,
                 devin_session_id=session.session_id,
                 devin_session_url=session.url,
             )
+            if _is_active_devin_status(session.status):
+                self.transition(session_created, TaskStatus.RUNNING)
         except DevinAPIError as exc:
+            self.repo.update_task(claimed_task, started_at=None)
             self.handle_retryable_error(claimed_task, str(exc))
+            if reraise_devin_errors:
+                raise
 
     def transition(self, task: RemediationTask, new_status: TaskStatus, **fields) -> RemediationTask:
         logger.info(
@@ -203,6 +245,7 @@ class RemediationOrchestrator:
         return self.repo.update_task(task, retry_count=new_count, failure_reason=reason)
 
     def handle_retryable_error(self, task: RemediationTask, reason: str) -> RemediationTask:
+        task = self.repo.update_task(task, status=TaskStatus.RECEIVED)
         return self.increment_retry(task, reason)
 
     def should_escalate(self, task: RemediationTask) -> bool:
