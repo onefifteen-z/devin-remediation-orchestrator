@@ -45,7 +45,7 @@ See [docs/architecture.md](docs/architecture.md) for detailed design.
 Issue → Webhook → Orchestrator → Devin → PR → CI → Review → Merge
 ```
 
-Phase 1 implements the foundation through webhook ingestion and task persistence. Live Devin session creation is gated behind `DEVIN_LIVE_ENABLED=false` by default.
+Phase 1 implements the foundation through webhook ingestion and task persistence. Phase 2A adds `POST /api/remediations` for manual remediation with live Devin V3 session creation gated behind `DEVIN_LIVE_ENABLED=false` by default.
 
 ## Repository Structure
 
@@ -107,7 +107,7 @@ make down       # docker compose down
 | `DEVIN_API_KEY` | Devin service user API key (`cog_...`) |
 | `DEVIN_ORG_ID` | Organization ID |
 | `DEVIN_API_BASE_URL` | Default: `https://api.devin.ai/v3` |
-| `DEVIN_LIVE_ENABLED` | `false` in Phase 1 (prevents live session creation) |
+| `DEVIN_LIVE_ENABLED` | `false` by default (safe mode — no live Devin API calls) |
 | `GITHUB_TOKEN` | GitHub PAT for REST API and manual issue scan |
 | `GITHUB_WEBHOOK_SECRET` | Webhook HMAC secret |
 | `GITHUB_SCAN_REPOSITORIES` | Comma-separated repos to scan (e.g. `owner/superset`) |
@@ -173,6 +173,30 @@ Requirements:
 
 Deduplication uses `(github_repository, github_issue_number)` as the business unique key. If an issue already has a task, it is skipped (`skip_if_any`).
 
+## Manual Remediation API
+
+Trigger a remediation task directly via the API (synchronous — the response includes session details when live mode is enabled):
+
+```bash
+curl -X POST http://localhost:8000/api/remediations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "repository": "onefifteen-z/superset",
+    "issue_number": 1,
+    "issue_url": "https://github.com/onefifteen-z/superset/issues/1",
+    "issue_type": "mcp-backend"
+  }'
+```
+
+**Safe mode (`DEVIN_LIVE_ENABLED=false`, default):** The task is persisted with status `RECEIVED`. No Devin API call is made and no ACUs are consumed. The response includes `devin_live_enabled: false` and a message indicating live execution is disabled.
+
+**Live mode (`DEVIN_LIVE_ENABLED=true`):** A real Devin V3 session is created. The response includes `devin_session_id`, `devin_session_url`, and status `RUNNING`. This consumes ACUs — only enable when you intend to run a real remediation.
+
+Requirements for live mode:
+
+- `DEVIN_API_KEY` and `DEVIN_ORG_ID` must be configured
+- Set `DEVIN_LIVE_ENABLED=true` in `backend/.env`
+
 ## Simulate a Webhook Locally
 
 ```bash
@@ -230,7 +254,7 @@ All metrics are computed from real database state—empty when no tasks exist.
 - Optional `MAX_ACU_PER_TASK` and `DAILY_ACU_CAP`
 - Webhook deduplication via `X-GitHub-Delivery`
 
-## Phase 1 Status (Current)
+## Phase 1 Status
 
 **Implemented:**
 
@@ -247,15 +271,25 @@ All metrics are computed from real database state—empty when no tasks exist.
 - React operations dashboard
 - Docker setup and tests
 
-**Not yet implemented (Phase 2):**
+## Phase 2A Status (Current)
 
-- Live Devin session creation from webhooks (`DEVIN_LIVE_ENABLED=true`)
+**Implemented:**
+
+- `POST /api/remediations` — manual remediation entry point
+- Synchronous orchestration: task creation → prompt building → Devin V3 session (when live)
+- Status lifecycle: `RECEIVED` → `SESSION_CREATED` → `RUNNING`
+- Devin session metadata persisted (`devin_session_id`, `devin_session_url`)
+- Feature flag gating (`DEVIN_LIVE_ENABLED=false` by default)
+- Orchestrator and API tests with mocked Devin responses
+
+**Not yet implemented (Phase 2B):**
+
 - Session polling and PR/CI detection
 - CI failure → same-session message loop
-- GitHub REST API integration
+- GitHub REST API integration (PR/check runs)
 - ACU consumption tracking from Devin billing API
 - Issue auto-close on merge
-- First real Superset remediation
+- Scheduled Devin sessions
 
 ## Known Limitations
 

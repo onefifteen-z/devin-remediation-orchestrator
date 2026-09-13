@@ -109,3 +109,57 @@ async def test_api_error(devin_settings):
     with pytest.raises(DevinAPIError):
         await client.create_session(prompt="test")
     await client.close()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_session_timeout(devin_settings):
+    respx.post("https://api.devin.ai/v3/organizations/org-test123/sessions").mock(
+        side_effect=httpx.TimeoutException("timed out")
+    )
+
+    client = DevinClient(devin_settings)
+    with pytest.raises(DevinAPIError, match="timed out"):
+        await client.create_session(prompt="test")
+    await client.close()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_session_malformed_response(devin_settings):
+    respx.post("https://api.devin.ai/v3/organizations/org-test123/sessions").mock(
+        return_value=httpx.Response(200, text="not json")
+    )
+
+    client = DevinClient(devin_settings)
+    with pytest.raises(DevinAPIError, match="Malformed"):
+        await client.create_session(prompt="test")
+    await client.close()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_create_session_missing_fields(devin_settings):
+    respx.post("https://api.devin.ai/v3/organizations/org-test123/sessions").mock(
+        return_value=httpx.Response(200, json={"status": "running"})
+    )
+
+    client = DevinClient(devin_settings)
+    with pytest.raises(DevinAPIError, match="Malformed"):
+        await client.create_session(prompt="test")
+    await client.close()
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_auth_error_does_not_leak_api_key(devin_settings):
+    respx.post("https://api.devin.ai/v3/organizations/org-test123/sessions").mock(
+        return_value=httpx.Response(401, json={"detail": "Unauthorized"})
+    )
+
+    client = DevinClient(devin_settings)
+    with pytest.raises(DevinAuthError) as exc_info:
+        await client.create_session(prompt="test")
+    await client.close()
+
+    assert "cog_test_key" not in str(exc_info.value)

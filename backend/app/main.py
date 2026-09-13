@@ -5,7 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import health, metrics, scan, tasks, webhooks
+from app.api import health, metrics, remediations, scan, tasks, webhooks
 from app.config import get_settings
 from app.database import init_db
 
@@ -43,6 +43,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(tasks.router)
 app.include_router(metrics.router)
+app.include_router(remediations.router)
 app.include_router(scan.router)
 app.include_router(webhooks.router)
 

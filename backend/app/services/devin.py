@@ -87,8 +87,6 @@ class DevinClient:
         max_acu_limit: int | None = None,
         repos: list[str] | None = None,
     ) -> DevinSessionResult:
-        # TODO: Verify optional fields (tags format, repos, structured_output_schema)
-        # against current Devin V3 API documentation before Phase 2.
         body: dict[str, Any] = {"prompt": prompt}
         if tags:
             body["tags"] = tags
@@ -98,10 +96,22 @@ class DevinClient:
             body["repos"] = repos
 
         client = await self._get_client()
-        response = await client.post(self._org_path("/sessions"), json=body)
+        try:
+            response = await client.post(self._org_path("/sessions"), json=body)
+        except httpx.TimeoutException:
+            raise DevinAPIError("Devin API request timed out") from None
+
         if response.status_code >= 400:
             self._handle_error(response)
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+        if "session_id" not in data or "url" not in data:
+            raise DevinAPIError("Malformed Devin API response")
+
         logger.info(
             "Devin session created",
             extra={"devin_session_id": data.get("session_id"), "status": data.get("status")},
