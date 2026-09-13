@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     github_token: str = ""
     github_webhook_secret: str = ""
+    github_scan_repositories: str = ""
+    remediate_label: str = "devin-remediate"
 
     database_url: str = "sqlite:///./data/app.db"
 
@@ -33,6 +35,15 @@ class Settings(BaseSettings):
 
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def github_scan_repositories_list(self) -> list[str]:
+        if not self.github_scan_repositories.strip():
+            return []
+        return [
+            repo.strip()
+            for repo in self.github_scan_repositories.split(",")
+            if repo.strip()
+        ]
 
     @field_validator("max_acu_per_task", "daily_acu_cap", mode="before")
     @classmethod

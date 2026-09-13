@@ -5,9 +5,15 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings
 from app.models.task import RemediationTask, TaskStatus
-from app.repositories.tasks import TaskRepository
+from app.repositories.tasks import (
+    DuplicateDeliveryError,
+    IssueAlreadyTrackedError,
+    TaskRepository,
+)
+from app.schemas.scan import ScanResult
 from app.schemas.task import RemediationEvent, TaskCreate
 from app.services.devin import DevinAPIError, DevinClient
+from app.services.github import GitHubClient
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
 
 logger = logging.getLogger(__name__)
@@ -17,30 +23,88 @@ class ConcurrencyLimitError(Exception):
     pass
 
 
+def _extract_issue_type(labels: list[dict], remediate_label: str) -> str:
+    for label in labels:
+        name = label.get("name", "")
+        if name != remediate_label:
+            return name
+    return "unknown"
+
+
+def _issue_key(repository: str, issue_number: int) -> str:
+    return f"{repository}#{issue_number}"
+
+
 class RemediationOrchestrator:
     def __init__(
         self,
         db: Session,
         settings: Settings,
         devin_client: DevinClient | None = None,
+        github_client: GitHubClient | None = None,
     ):
         self.db = db
         self.settings = settings
         self.repo = TaskRepository(db)
         self.devin_client = devin_client or DevinClient(settings)
+        self.github_client = github_client or GitHubClient(settings)
 
-    def handle_webhook_event(self, event: RemediationEvent) -> RemediationTask:
-        return self.repo.create_task(
-            TaskCreate(
-                github_delivery_id=event.github_delivery_id,
-                github_repository=event.github_repository,
-                github_issue_number=event.github_issue_number,
-                github_issue_url=event.github_issue_url,
-                issue_title=event.issue_title,
-                issue_type=event.issue_type,
-                max_retries=self.settings.max_retries,
-            )
+    def ensure_task_for_issue(self, event: RemediationEvent) -> tuple[RemediationTask, str]:
+        existing = self.repo.get_by_issue(
+            event.github_repository, event.github_issue_number
         )
+        if existing:
+            return existing, "skipped"
+
+        try:
+            task = self.repo.create_task(
+                TaskCreate(
+                    github_delivery_id=event.github_delivery_id,
+                    github_repository=event.github_repository,
+                    github_issue_number=event.github_issue_number,
+                    github_issue_url=event.github_issue_url,
+                    issue_title=event.issue_title,
+                    issue_type=event.issue_type,
+                    max_retries=self.settings.max_retries,
+                )
+            )
+            return task, "created"
+        except IssueAlreadyTrackedError as exc:
+            return exc.existing_task, "skipped"
+        except DuplicateDeliveryError as exc:
+            return exc.existing_task, "skipped"
+
+    def handle_webhook_event(self, event: RemediationEvent) -> tuple[RemediationTask, str]:
+        return self.ensure_task_for_issue(event)
+
+    async def scan_labeled_issues(self) -> ScanResult:
+        repositories = self.settings.github_scan_repositories_list()
+        label = self.settings.remediate_label
+        result = ScanResult()
+
+        for repository in repositories:
+            issues = await self.github_client.list_issues_by_label(repository, label)
+            for issue in issues:
+                result.scanned += 1
+                event = RemediationEvent(
+                    github_delivery_id=f"manual:{repository}:{issue['number']}",
+                    github_repository=repository,
+                    github_issue_number=issue["number"],
+                    github_issue_url=issue["html_url"],
+                    issue_title=issue["title"],
+                    issue_type=_extract_issue_type(issue.get("labels", []), label),
+                )
+                task, status = self.ensure_task_for_issue(event)
+                if status == "created":
+                    result.created += 1
+                    result.created_task_ids.append(task.id)
+                else:
+                    result.skipped += 1
+                    result.skipped_issues.append(
+                        _issue_key(repository, issue["number"])
+                    )
+
+        return result
 
     async def process_task(self, task_id: int) -> None:
         task = self.repo.get_by_id(task_id)

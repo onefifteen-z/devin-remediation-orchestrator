@@ -108,8 +108,10 @@ make down       # docker compose down
 | `DEVIN_ORG_ID` | Organization ID |
 | `DEVIN_API_BASE_URL` | Default: `https://api.devin.ai/v3` |
 | `DEVIN_LIVE_ENABLED` | `false` in Phase 1 (prevents live session creation) |
-| `GITHUB_TOKEN` | GitHub PAT for REST API (Phase 2) |
+| `GITHUB_TOKEN` | GitHub PAT for REST API and manual issue scan |
 | `GITHUB_WEBHOOK_SECRET` | Webhook HMAC secret |
+| `GITHUB_SCAN_REPOSITORIES` | Comma-separated repos to scan (e.g. `owner/superset`) |
+| `REMEDIATE_LABEL` | Label to scan for (default: `devin-remediate`) |
 | `DATABASE_URL` | Default: `sqlite:///./data/app.db` |
 | `MAX_ACTIVE_SESSIONS` | Concurrency limit (default: 3) |
 | `MAX_RETRIES` | Max retries before escalation (default: 3) |
@@ -155,6 +157,21 @@ pytest -v
    - **Events:** Issues
 
 2. Add the `devin-remediate` label to an issue to trigger remediation.
+
+## Manual Issue Scan (Backfill)
+
+For existing open issues that already have the `devin-remediate` label, use the dashboard **Scan labeled issues** button or call:
+
+```bash
+curl -X POST http://localhost:8000/api/scan/github
+```
+
+Requirements:
+
+- `GITHUB_TOKEN` must be configured
+- `GITHUB_SCAN_REPOSITORIES` must list target repos (e.g. `owner/superset`)
+
+Deduplication uses `(github_repository, github_issue_number)` as the business unique key. If an issue already has a task, it is skipped (`skip_if_any`).
 
 ## Simulate a Webhook Locally
 
@@ -221,7 +238,8 @@ All metrics are computed from real database state—empty when no tasks exist.
 - FastAPI application with health, tasks, metrics, webhook endpoints
 - SQLite persistence with audit trail
 - GitHub webhook HMAC verification and event filtering
-- Webhook deduplication
+- Webhook deduplication and issue-level dedup (`repo + issue_number`)
+- Manual scan API and dashboard button for backfilling labeled issues
 - Devin V3 client abstraction (HTTP layer, mockable)
 - GitHub client skeleton
 - Prompt builder and orchestration service

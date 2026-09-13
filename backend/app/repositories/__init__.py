@@ -1,3 +1,7 @@
-from app.repositories.tasks import DuplicateDeliveryError, TaskRepository
+from app.repositories.tasks import (
+    DuplicateDeliveryError,
+    IssueAlreadyTrackedError,
+    TaskRepository,
+)
 
-__all__ = ["DuplicateDeliveryError", "TaskRepository"]
+__all__ = ["DuplicateDeliveryError", "IssueAlreadyTrackedError", "TaskRepository"]

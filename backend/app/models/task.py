@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Float, Integer, String, Text, func
+from sqlalchemy import DateTime, Enum, Float, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -35,6 +35,9 @@ TERMINAL_STATUSES = {
 
 class RemediationTask(Base):
     __tablename__ = "remediation_tasks"
+    __table_args__ = (
+        UniqueConstraint("github_repository", "github_issue_number", name="uq_repo_issue"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 

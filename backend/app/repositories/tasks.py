@@ -14,14 +14,27 @@ class DuplicateDeliveryError(Exception):
         super().__init__(f"Duplicate delivery: {existing_task.github_delivery_id}")
 
 
+class IssueAlreadyTrackedError(Exception):
+    def __init__(self, existing_task: RemediationTask):
+        self.existing_task = existing_task
+        super().__init__(
+            f"Issue already tracked: {existing_task.github_repository}"
+            f"#{existing_task.github_issue_number}"
+        )
+
+
 class TaskRepository:
     def __init__(self, db: Session):
         self.db = db
 
     def create_task(self, data: TaskCreate) -> RemediationTask:
-        existing = self.get_by_delivery_id(data.github_delivery_id)
-        if existing:
-            raise DuplicateDeliveryError(existing)
+        existing_issue = self.get_by_issue(data.github_repository, data.github_issue_number)
+        if existing_issue:
+            raise IssueAlreadyTrackedError(existing_issue)
+
+        existing_delivery = self.get_by_delivery_id(data.github_delivery_id)
+        if existing_delivery:
+            raise DuplicateDeliveryError(existing_delivery)
 
         task = RemediationTask(
             github_delivery_id=data.github_delivery_id,
@@ -38,9 +51,12 @@ class TaskRepository:
             self.db.commit()
         except IntegrityError:
             self.db.rollback()
-            existing = self.get_by_delivery_id(data.github_delivery_id)
-            if existing:
-                raise DuplicateDeliveryError(existing) from None
+            existing_issue = self.get_by_issue(data.github_repository, data.github_issue_number)
+            if existing_issue:
+                raise IssueAlreadyTrackedError(existing_issue) from None
+            existing_delivery = self.get_by_delivery_id(data.github_delivery_id)
+            if existing_delivery:
+                raise DuplicateDeliveryError(existing_delivery) from None
             raise
         self.db.refresh(task)
         return task
@@ -51,6 +67,13 @@ class TaskRepository:
     def get_by_delivery_id(self, delivery_id: str) -> RemediationTask | None:
         stmt = select(RemediationTask).where(
             RemediationTask.github_delivery_id == delivery_id
+        )
+        return self.db.scalars(stmt).first()
+
+    def get_by_issue(self, repository: str, issue_number: int) -> RemediationTask | None:
+        stmt = select(RemediationTask).where(
+            RemediationTask.github_repository == repository,
+            RemediationTask.github_issue_number == issue_number,
         )
         return self.db.scalars(stmt).first()
 

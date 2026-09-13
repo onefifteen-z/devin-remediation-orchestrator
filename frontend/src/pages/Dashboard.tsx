@@ -1,6 +1,7 @@
-import { useQuery } from "@tanstack/react-query"
-import { AlertCircle, RefreshCw } from "lucide-react"
-import { fetchMetrics, fetchTasks } from "@/api/client"
+import { useMutation, useQuery } from "@tanstack/react-query"
+import { AlertCircle, RefreshCw, ScanSearch } from "lucide-react"
+import { useState } from "react"
+import { fetchMetrics, fetchTasks, scanGitHubIssues } from "@/api/client"
 import { MetricCard } from "@/components/MetricCard"
 import { TaskTable } from "@/components/TaskTable"
 import { ThroughputChart } from "@/components/ThroughputChart"
@@ -12,6 +13,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { formatDuration, formatPercent } from "@/lib/utils"
 
 export function Dashboard() {
+  const [scanMessage, setScanMessage] = useState<string | null>(null)
+  const [scanError, setScanError] = useState<string | null>(null)
+
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
     queryFn: fetchMetrics,
@@ -26,6 +30,22 @@ export function Dashboard() {
 
   const isLoading = metricsQuery.isLoading || tasksQuery.isLoading
   const isError = metricsQuery.isError || tasksQuery.isError
+
+  const scanMutation = useMutation({
+    mutationFn: scanGitHubIssues,
+    onSuccess: (result) => {
+      setScanError(null)
+      setScanMessage(
+        `Scan complete: ${result.created} created, ${result.skipped} skipped (${result.scanned} scanned).`
+      )
+      metricsQuery.refetch()
+      tasksQuery.refetch()
+    },
+    onError: (error: Error) => {
+      setScanMessage(null)
+      setScanError(error.message)
+    },
+  })
 
   const refetch = () => {
     metricsQuery.refetch()
@@ -45,14 +65,39 @@ export function Dashboard() {
               Autonomous remediation operations console
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={refetch} disabled={isLoading}>
-            <RefreshCw className="mr-2 h-3.5 w-3.5" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => scanMutation.mutate()}
+              disabled={scanMutation.isPending}
+            >
+              <ScanSearch className="mr-2 h-3.5 w-3.5" />
+              {scanMutation.isPending ? "Scanning..." : "Scan labeled issues"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={refetch} disabled={isLoading}>
+              <RefreshCw className="mr-2 h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
+        {scanMessage && (
+          <Alert>
+            <AlertTitle>Scan result</AlertTitle>
+            <AlertDescription>{scanMessage}</AlertDescription>
+          </Alert>
+        )}
+
+        {scanError && (
+          <Alert variant="destructive">
+            <AlertTitle>Scan failed</AlertTitle>
+            <AlertDescription>{scanError}</AlertDescription>
+          </Alert>
+        )}
+
         {isError && (
           <Alert variant="destructive">
             <AlertCircle className="h-4 w-4" />
@@ -118,7 +163,7 @@ export function Dashboard() {
                 <AlertTitle>No remediations yet</AlertTitle>
                 <AlertDescription>
                   Add the <code className="rounded bg-muted px-1 py-0.5 text-xs">devin-remediate</code>{" "}
-                  label to a GitHub issue to trigger the first remediation task.
+                  label to a GitHub issue, then click Scan labeled issues to import existing open issues.
                 </AlertDescription>
               </Alert>
             ) : (

@@ -15,7 +15,7 @@ class GitHubAPIError(Exception):
 
 
 class GitHubClient:
-    """GitHub REST API client skeleton. Full implementation in Phase 2."""
+    """GitHub REST API client."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -39,6 +39,36 @@ class GitHubClient:
         if self._owns_client and self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    def _handle_error(self, response: httpx.Response) -> None:
+        if response.status_code >= 400:
+            raise GitHubAPIError(
+                f"GitHub API error: {response.status_code}",
+                response.status_code,
+            )
+
+    async def list_issues_by_label(self, repository: str, label: str) -> list[dict[str, Any]]:
+        owner, repo = repository.split("/", 1)
+        client = await self._get_client()
+        response = await client.get(
+            f"/repos/{owner}/{repo}/issues",
+            params={"labels": label, "state": "open", "per_page": 100},
+        )
+        if response.status_code >= 400:
+            self._handle_error(response)
+
+        issues = response.json()
+        return [
+            {
+                "repository": repository,
+                "number": issue["number"],
+                "title": issue.get("title", ""),
+                "html_url": issue["html_url"],
+                "labels": issue.get("labels", []),
+            }
+            for issue in issues
+            if "pull_request" not in issue
+        ]
 
     async def get_issue(self, repository: str, issue_number: int) -> dict[str, Any]:
         # TODO: Phase 2 — implement issue fetch

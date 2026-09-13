@@ -97,8 +97,31 @@ Phase 1: client implemented; live calls gated by `DEVIN_LIVE_ENABLED=false`.
 ## GitHub Integration Boundary
 
 - Webhook: HMAC-SHA256 verification via `X-Hub-Signature-256`
-- Deduplication: `X-GitHub-Delivery` unique constraint
-- REST client skeleton in `backend/app/services/github.py` (Phase 2)
+- Deduplication (dual layer):
+  - `X-GitHub-Delivery` — webhook retry dedup
+  - `(github_repository, github_issue_number)` — business unique key across webhook and manual scan
+- Manual scan: `POST /api/scan/github` lists open labeled issues via GitHub REST API
+- REST client in `backend/app/services/github.py` (`list_issues_by_label` implemented; PR/CI methods Phase 2)
+
+```mermaid
+flowchart LR
+  subgraph triggers [Issue Discovery]
+    WH[GitHubWebhook labeled]
+    SCAN[ManualScanButton]
+  end
+
+  subgraph dedup [Deduplication]
+    D1[delivery_id]
+    D2[repo_plus_issue_number]
+  end
+
+  ORCH[RemediationOrchestrator]
+  DB[(SQLite)]
+
+  WH --> D1 --> ORCH
+  SCAN --> D2 --> ORCH
+  ORCH --> DB
+```
 
 ## Persistence
 

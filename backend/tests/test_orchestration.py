@@ -4,7 +4,7 @@ import asyncio
 
 from app.config import Settings
 from app.models.task import RemediationTask, TaskStatus
-from app.repositories.tasks import DuplicateDeliveryError, TaskRepository
+from app.repositories.tasks import IssueAlreadyTrackedError, TaskRepository
 from app.schemas.task import RemediationEvent, TaskCreate
 from app.services.orchestration import RemediationOrchestrator
 
@@ -37,7 +37,8 @@ def _make_event(delivery_id: str = "orch-delivery-001") -> RemediationEvent:
 
 
 def test_handle_webhook_event_creates_task(orchestrator):
-    task = orchestrator.handle_webhook_event(_make_event())
+    task, outcome = orchestrator.handle_webhook_event(_make_event())
+    assert outcome == "created"
     assert task.status == TaskStatus.RECEIVED
     assert task.github_repository == "owner/superset"
 
@@ -66,7 +67,7 @@ def test_state_transition(orchestrator, db_session):
 
 @pytest.mark.asyncio
 async def test_process_task_stays_received_when_live_disabled(orchestrator, db_session):
-    task = orchestrator.handle_webhook_event(_make_event("process-001"))
+    task, _ = orchestrator.handle_webhook_event(_make_event("process-001"))
     await orchestrator.process_task(task.id)
     refreshed = TaskRepository(db_session).get_by_id(task.id)
     assert refreshed.status == TaskStatus.RECEIVED
@@ -154,7 +155,7 @@ async def test_process_task_claims_atomically(db_session):
     )
     fake_client = FakeDevinClient()
     orchestrator = RemediationOrchestrator(db_session, settings, devin_client=fake_client)
-    task = orchestrator.handle_webhook_event(_make_event("atomic-001"))
+    task, _ = orchestrator.handle_webhook_event(_make_event("atomic-001"))
 
     await asyncio.gather(
         orchestrator.process_task(task.id),
@@ -167,7 +168,31 @@ async def test_process_task_claims_atomically(db_session):
     assert refreshed.devin_session_id == "devin-test-001"
 
 
-def test_duplicate_delivery_raises_error(orchestrator):
-    orchestrator.handle_webhook_event(_make_event("dup-001"))
-    with pytest.raises(DuplicateDeliveryError):
-        orchestrator.handle_webhook_event(_make_event("dup-001"))
+def test_duplicate_issue_is_skipped(orchestrator):
+    _, first_outcome = orchestrator.handle_webhook_event(_make_event("dup-001"))
+    task, second_outcome = orchestrator.handle_webhook_event(
+        RemediationEvent(
+            github_delivery_id="another-delivery-id",
+            github_repository="owner/superset",
+            github_issue_number=100,
+            github_issue_url="https://github.com/owner/superset/issues/100",
+            issue_title="Test issue",
+            issue_type="bug",
+        )
+    )
+    assert first_outcome == "created"
+    assert second_outcome == "skipped"
+
+
+def test_issue_unique_constraint_enforced(orchestrator, db_session):
+    orchestrator.handle_webhook_event(_make_event("unique-001"))
+    with pytest.raises(IssueAlreadyTrackedError):
+        TaskRepository(db_session).create_task(
+            TaskCreate(
+                github_delivery_id="manual:owner/superset:100",
+                github_repository="owner/superset",
+                github_issue_number=100,
+                github_issue_url="https://github.com/owner/superset/issues/100",
+                issue_title="Duplicate issue",
+            )
+        )

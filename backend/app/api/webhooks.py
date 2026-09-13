@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db, get_session_factory
-from app.repositories.tasks import DuplicateDeliveryError
+from app.repositories.tasks import DuplicateDeliveryError, IssueAlreadyTrackedError
 from app.schemas.task import RemediationEvent, TaskResponse
 from app.services.orchestration import RemediationOrchestrator
 from app.utils.security import verify_github_signature
@@ -91,11 +91,22 @@ async def github_webhook(
     orchestrator = RemediationOrchestrator(db, settings)
 
     try:
-        task = orchestrator.handle_webhook_event(event)
+        task, outcome = orchestrator.handle_webhook_event(event)
     except DuplicateDeliveryError as exc:
         return {
             "status": "duplicate",
             "task": TaskResponse.from_orm_task(exc.existing_task).model_dump(),
+        }
+    except IssueAlreadyTrackedError as exc:
+        return {
+            "status": "duplicate",
+            "task": TaskResponse.from_orm_task(exc.existing_task).model_dump(),
+        }
+
+    if outcome == "skipped":
+        return {
+            "status": "duplicate",
+            "task": TaskResponse.from_orm_task(task).model_dump(),
         }
 
     logger.info(
