@@ -11,11 +11,11 @@ class MetricsResponse(BaseModel):
     active_tasks: int = 0
     success_rate: float = Field(
         default=0.0,
-        description="MERGED / terminal tasks (MERGED + FAILED + ESCALATED).",
+        description="MERGED / terminal production remediations (excludes smoke tests).",
     )
     merge_rate: float = Field(
         default=0.0,
-        description="MERGED / total tasks.",
+        description="MERGED production remediations / production remediation tasks (excludes smoke tests).",
     )
     median_mttr_seconds: float | None = Field(
         default=None,

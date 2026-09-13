@@ -20,6 +20,7 @@ from app.schemas.github_events import PullRequestEvent, extract_issue_type
 from app.services.github import GitHubClient
 from app.services.github_events import find_task_for_pr
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
+from app.services.task_classification import trigger_source_from_event_source
 from app.services.session_lifecycle import (
     extract_devin_audit_fields,
     extract_primary_pull_request,
@@ -97,6 +98,7 @@ class RemediationOrchestrator:
                     github_issue_url=event.github_issue_url,
                     issue_title=event.issue_title,
                     issue_type=event.issue_type,
+                    trigger_source=trigger_source_from_event_source(event.source),
                     max_retries=self.settings.max_retries,
                 )
             )

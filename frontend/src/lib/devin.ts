@@ -1,3 +1,5 @@
+import type { TaskStatus } from "@/types/task"
+
 const STATUS_DETAIL_LABELS: Record<string, string> = {
   usage_limit_exceeded: "usage limit exceeded",
   out_of_credits: "out of credits",
@@ -14,6 +16,15 @@ const ORIGIN_LABELS: Record<string, string> = {
   automation: "Automation",
   code_scan: "Code Scan",
 }
+
+const TRIGGER_SOURCE_LABELS: Record<string, string> = {
+  github_webhook: "GitHub Webhook",
+  manual_api: "Manual API",
+  scan: "Scan",
+  scheduled: "Scheduled",
+}
+
+const TERMINAL_TASK_STATUSES: TaskStatus[] = ["MERGED", "FAILED", "ESCALATED"]
 
 export function formatDevinStatusDetail(detail: string | null | undefined): string | null {
   if (!detail) return null
@@ -36,6 +47,26 @@ export function formatTaskSource(
   return ORIGIN_LABELS[devinOrigin] ?? devinOrigin
 }
 
+export function formatTriggerSource(
+  triggerSource: string | null | undefined,
+): string {
+  if (!triggerSource) return "Unknown"
+  return TRIGGER_SOURCE_LABELS[triggerSource] ?? triggerSource.replaceAll("_", " ")
+}
+
+export function formatDevinExecutionForTask(
+  taskStatus: TaskStatus,
+  devinStatus: string | null | undefined,
+  devinStatusDetail: string | null | undefined,
+): string {
+  if (TERMINAL_TASK_STATUSES.includes(taskStatus)) {
+    if (taskStatus === "MERGED") return "completed"
+    if (taskStatus === "FAILED") return "failed"
+    return "escalated"
+  }
+  return formatDevinExecution(devinStatus, devinStatusDetail)
+}
+
 export function getDevinAlert(
   devinStatus: string | null | undefined,
   devinStatusDetail: string | null | undefined,
@@ -56,6 +87,17 @@ export function getDevinAlert(
   return null
 }
 
+export function getDevinAlertForTask(
+  taskStatus: TaskStatus,
+  devinStatus: string | null | undefined,
+  devinStatusDetail: string | null | undefined,
+): string | null {
+  if (TERMINAL_TASK_STATUSES.includes(taskStatus)) {
+    return null
+  }
+  return getDevinAlert(devinStatus, devinStatusDetail)
+}
+
 export function formatPrState(prState: string | null | undefined): string | null {
   if (!prState) return null
   return prState.charAt(0).toUpperCase() + prState.slice(1)
@@ -65,3 +107,5 @@ export function extractPrNumber(prUrl: string): string | null {
   const match = prUrl.match(/\/pull\/(\d+)/)
   return match ? `#${match[1]}` : null
 }
+
+export const terminalTaskStatuses = TERMINAL_TASK_STATUSES

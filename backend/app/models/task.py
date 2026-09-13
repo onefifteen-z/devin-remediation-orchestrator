@@ -35,6 +35,13 @@ TERMINAL_STATUSES = {
 }
 
 
+class TriggerSource(str, enum.Enum):
+    GITHUB_WEBHOOK = "github_webhook"
+    MANUAL_API = "manual_api"
+    SCAN = "scan"
+    SCHEDULED = "scheduled"
+
+
 class RemediationTask(Base):
     __tablename__ = "remediation_tasks"
     __table_args__ = (
@@ -50,6 +57,7 @@ class RemediationTask(Base):
 
     issue_title: Mapped[str] = mapped_column(String(512))
     issue_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    trigger_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     devin_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     devin_session_url: Mapped[str | None] = mapped_column(String(512), nullable=True)

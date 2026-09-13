@@ -26,6 +26,7 @@ class TaskCreate(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str = "unknown"
+    trigger_source: str = "github_webhook"
     max_retries: int = 3
 
 
@@ -39,6 +40,7 @@ class TaskResponse(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str
+    trigger_source: str | None = None
     devin_session_id: str | None
     devin_session_url: str | None
     devin_status: str | None = None
@@ -93,6 +95,7 @@ class TaskResponse(BaseModel):
             github_issue_url=task.github_issue_url,
             issue_title=task.issue_title,
             issue_type=task.issue_type,
+            trigger_source=task.trigger_source,
             devin_session_id=task.devin_session_id,
             devin_session_url=task.devin_session_url,
             devin_status=task.devin_status,

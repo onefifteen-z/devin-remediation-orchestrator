@@ -125,7 +125,7 @@ export function Dashboard() {
           <MetricCard
             title="Merge Rate"
             value={metrics ? formatPercent(metrics.merge_rate) : "—"}
-            description="Requires verified GitHub merge"
+            description="Production remediations merged / production tasks (excludes smoke tests)"
             loading={isLoading}
           />
           <MetricCard

@@ -10,10 +10,10 @@ import {
 import { formatCiRepairLine } from "@/lib/ci"
 import {
   extractPrNumber,
-  formatDevinExecution,
+  formatDevinExecutionForTask,
   formatPrState,
-  formatTaskSource,
-  getDevinAlert,
+  formatTriggerSource,
+  getDevinAlertForTask,
 } from "@/lib/devin"
 import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
@@ -40,7 +40,11 @@ export function TaskTable({ tasks }: TaskTableProps) {
       </TableHeader>
       <TableBody>
         {tasks.map((task) => {
-          const devinAlert = getDevinAlert(task.devin_status, task.devin_status_detail)
+          const devinAlert = getDevinAlertForTask(
+            task.status,
+            task.devin_status,
+            task.devin_status_detail,
+          )
           const prNumber = task.pr_url ? extractPrNumber(task.pr_url) : null
           const prState = formatPrState(task.pr_state)
           const ciLine = formatCiRepairLine(
@@ -67,7 +71,7 @@ export function TaskTable({ tasks }: TaskTableProps) {
                 </div>
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">
-                {formatTaskSource(task.devin_origin)}
+                {formatTriggerSource(task.trigger_source)}
               </TableCell>
               <TableCell>
                 <StatusBadge status={task.status} />
@@ -81,11 +85,19 @@ export function TaskTable({ tasks }: TaskTableProps) {
                       rel="noopener noreferrer"
                       className="font-mono text-xs text-blue-400 hover:underline"
                     >
-                      {formatDevinExecution(task.devin_status, task.devin_status_detail)}
+                      {formatDevinExecutionForTask(
+                        task.status,
+                        task.devin_status,
+                        task.devin_status_detail,
+                      )}
                     </a>
                   ) : (
                     <span className="font-mono text-xs text-muted-foreground">
-                      {formatDevinExecution(task.devin_status, task.devin_status_detail)}
+                      {formatDevinExecutionForTask(
+                        task.status,
+                        task.devin_status,
+                        task.devin_status_detail,
+                      )}
                     </span>
                   )}
                   {devinAlert && (

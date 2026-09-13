@@ -6,6 +6,7 @@ from app.models.task import ACTIVE_STATUSES, TERMINAL_STATUSES, RemediationTask,
 from app.repositories.tasks import TaskRepository
 from app.schemas.ci import FailureType
 from app.schemas.metrics import MetricsResponse, ThroughputPoint
+from app.services.task_classification import is_production_remediation
 
 
 class MetricsService:
@@ -18,15 +19,28 @@ class MetricsService:
             return MetricsResponse()
 
         total = len(tasks)
+        production_tasks = [task for task in tasks if is_production_remediation(task)]
         active = sum(1 for t in tasks if t.status in ACTIVE_STATUSES)
         merged = [t for t in tasks if t.status == TaskStatus.MERGED]
+        merged_production = [
+            t for t in production_tasks if t.status == TaskStatus.MERGED
+        ]
         failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
         escalated = sum(1 for t in tasks if t.status == TaskStatus.ESCALATED)
         tasks_with_prs = sum(1 for t in tasks if t.pr_url is not None)
         terminal = [t for t in tasks if t.status in TERMINAL_STATUSES]
+        production_terminal = [
+            t for t in production_tasks if t.status in TERMINAL_STATUSES
+        ]
 
-        success_rate = len(merged) / len(terminal) if terminal else 0.0
-        merge_rate = len(merged) / total if total else 0.0
+        success_rate = (
+            len(merged_production) / len(production_terminal)
+            if production_terminal
+            else 0.0
+        )
+        merge_rate = (
+            len(merged_production) / len(production_tasks) if production_tasks else 0.0
+        )
 
         mttr_values = []
         for task in merged:

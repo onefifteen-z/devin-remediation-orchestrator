@@ -41,7 +41,7 @@ def test_upgrade_database_bootstraps_new_database(tmp_path):
     inspector = inspect(engine)
     assert inspector.has_table("remediation_tasks")
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005"
 
 
 def test_upgrade_database_stamps_and_migrates_legacy_database(tmp_path):
@@ -65,10 +65,11 @@ def test_upgrade_database_stamps_and_migrates_legacy_database(tmp_path):
         "ci_classification_reason",
         "ci_check_name",
         "ci_repair_attempts",
+        "trigger_source",
     }.issubset(columns)
     assert inspect(engine).has_table("github_webhook_deliveries")
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005"
 
 
 def test_upgrade_database_stamps_unversioned_current_schema_at_head(tmp_path):
@@ -79,4 +80,4 @@ def test_upgrade_database_stamps_unversioned_current_schema_at_head(tmp_path):
     _upgrade_database(engine, database_url)
 
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0004"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0005"

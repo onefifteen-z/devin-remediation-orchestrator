@@ -45,6 +45,8 @@ PHASE_3_CI_COLUMNS = {
     "ci_non_code_failure_count",
 }
 
+PHASE_5_TRIGGER_SOURCE_COLUMNS = {"trigger_source"}
+
 
 def get_engine():
     global _engine
@@ -97,7 +99,16 @@ def _upgrade_database(engine, database_url: str) -> None:
                 and "uq_repo_issue" in unique_constraints
             )
             has_phase_3_ci = PHASE_3_CI_COLUMNS.issubset(columns)
+            has_trigger_source = PHASE_5_TRIGGER_SOURCE_COLUMNS.issubset(columns)
             if (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+            ):
+                baseline = "0005"
+            elif (
                 has_phase_2b
                 and PHASE_2C_COLUMNS.issubset(columns)
                 and has_webhook_deliveries
