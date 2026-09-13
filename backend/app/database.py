@@ -1,7 +1,7 @@
 from collections.abc import Generator
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
@@ -19,6 +19,15 @@ def _ensure_data_dir(database_url: str) -> None:
 
 _engine = None
 _SessionLocal = None
+
+LATEST_AUDIT_COLUMNS = {
+    "pr_state",
+    "devin_status",
+    "devin_status_detail",
+    "devin_origin",
+    "devin_service_user_id",
+    "devin_tags",
+}
 
 
 def get_engine():
@@ -42,10 +51,49 @@ def get_session_factory():
     return _SessionLocal
 
 
-def init_db() -> None:
-    from app.models.task import RemediationTask  # noqa: F401
+def _upgrade_database(engine, database_url: str) -> None:
+    from alembic import command
+    from alembic.config import Config
+    from alembic.runtime.migration import MigrationContext
 
-    Base.metadata.create_all(bind=get_engine())
+    backend_root = Path(__file__).resolve().parent.parent
+    alembic_cfg = Config(str(backend_root / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", database_url)
+
+    with engine.begin() as connection:
+        alembic_cfg.attributes["connection"] = connection
+        current_revision = MigrationContext.configure(connection).get_current_revision()
+        inspector = inspect(connection)
+        has_legacy_table = inspector.has_table("remediation_tasks")
+
+        if current_revision is None and has_legacy_table:
+            columns = {
+                column["name"]
+                for column in inspector.get_columns("remediation_tasks")
+            }
+            unique_constraints = {
+                constraint["name"]
+                for constraint in inspector.get_unique_constraints("remediation_tasks")
+            }
+            baseline = (
+                "0002"
+                if LATEST_AUDIT_COLUMNS.issubset(columns)
+                and "uq_repo_issue" in unique_constraints
+                else "0001"
+            )
+            command.stamp(alembic_cfg, baseline)
+
+        command.upgrade(alembic_cfg, "head")
+
+
+def run_migrations() -> None:
+    settings = get_settings()
+    _ensure_data_dir(settings.database_url)
+    _upgrade_database(get_engine(), settings.database_url)
+
+
+def init_db() -> None:
+    run_migrations()
 
 
 def get_db() -> Generator[Session, None, None]:

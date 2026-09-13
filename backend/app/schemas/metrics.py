@@ -32,5 +32,6 @@ class MetricsResponse(BaseModel):
     )
     total_acu: float = 0.0
     average_acu_per_task: float = 0.0
+    tasks_with_prs: int = 0
     failed_tasks: int = 0
     escalated_tasks: int = 0

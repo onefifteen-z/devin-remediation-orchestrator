@@ -96,9 +96,24 @@ Dashboard: http://localhost:3000
 make backend    # start backend
 make frontend   # start frontend
 make test       # run backend tests
+make migrate    # apply Alembic migrations to head
 make up         # docker compose up --build
 make down       # docker compose down
 ```
+
+### Database migrations
+
+Schema changes are managed with [Alembic](https://alembic.sqlalchemy.org/) under `backend/alembic/`.
+
+```bash
+cd backend
+alembic upgrade head          # apply pending migrations
+alembic revision -m "message" # create a new migration (autogenerate: add --autogenerate)
+```
+
+Migrations run automatically when the backend starts. A database created before
+Alembic was introduced is detected, stamped at the `0001` baseline, and upgraded
+without deleting its existing data.
 
 ## Backend Environment Variables
 
@@ -116,6 +131,8 @@ make down       # docker compose down
 | `MAX_ACTIVE_SESSIONS` | Concurrency limit (default: 3) |
 | `MAX_RETRIES` | Max retries before escalation (default: 3) |
 | `DEVIN_SESSION_TIMEOUT_MINUTES` | Session timeout (default: 60) |
+| `DEVIN_SESSION_POLL_INTERVAL_SECONDS` | Devin session poll interval in seconds (default: 15; `0` disables poller) |
+| `DEVIN_POLL_MAX_FAILURES` | Consecutive poll failures before escalation (default: 10) |
 | `MAX_ACU_PER_TASK` | Per-task ACU cap (optional) |
 | `DAILY_ACU_CAP` | Daily ACU cap (optional) |
 | `CORS_ORIGINS` | Comma-separated origins |
@@ -235,9 +252,10 @@ The dashboard and `GET /api/metrics` expose:
 - 7-day throughput
 - CI recovery rate
 - Total / average ACU
+- Tasks with PRs
 - Active, failed, escalated task counts
 
-All metrics are computed from real database state—empty when no tasks exist.
+All metrics are computed from real database state—empty when no tasks exist. Merge rate and median MTTR remain zero/null until a task reaches verified `MERGED` status (Phase 2C).
 
 ## Security Model
 
@@ -271,7 +289,7 @@ All metrics are computed from real database state—empty when no tasks exist.
 - React operations dashboard
 - Docker setup and tests
 
-## Phase 2A Status (Current)
+## Phase 2A Status
 
 **Implemented:**
 
@@ -282,22 +300,62 @@ All metrics are computed from real database state—empty when no tasks exist.
 - Feature flag gating (`DEVIN_LIVE_ENABLED=false` by default)
 - Orchestrator and API tests with mocked Devin responses
 
-**Not yet implemented (Phase 2B):**
+## Phase 2B Status (Current)
 
-- Session polling and PR/CI detection
-- CI failure → same-session message loop
-- GitHub REST API integration (PR/check runs)
-- ACU consumption tracking from Devin billing API
-- Issue auto-close on merge
+**Session lifecycle tracking — implemented:**
+
+- `DevinClient.get_session()` — typed V3 session detail response with full error handling
+- Background `SessionPoller` — polls active tasks every `DEVIN_SESSION_POLL_INTERVAL_SECONDS` (default 15)
+- Devin fields consumed: `status`, `status_detail`, `origin`, `service_user_id`, `tags`, `pull_requests`, `acus_consumed`, `structured_output`
+- Raw Devin execution state persisted on every poll (`devin_status`, `devin_status_detail`, etc.)
+- Dual-dimension model: `status` = workflow progress; `devin_status` / `devin_status_detail` = agent execution state
+- PR detection from Devin session response (`pr_url`, `pr_state`); first PR wins when multiple exist
+- ACU tracking from `acus_consumed` on every poll
+- Task status updates based on real Devin data (no fake transitions)
+- Dashboard shows workflow status and Devin execution detail separately
+- Live dashboard refresh every 15 seconds via TanStack Query
+
+**Workflow mapping (Devin → `status`):**
+
+| Devin `status` | `status_detail` | PR | Workflow `status` |
+|----------------|-----------------|----|-------------------|
+| `new`, `claimed` | — | no | `SESSION_CREATED` |
+| `new`, `claimed` | — | yes | `PR_OPENED` |
+| `running`, `resuming` | any | no | `RUNNING` |
+| `running`, `resuming` | any | yes | `PR_OPENED` |
+| `suspended` | `usage_limit_exceeded`, `out_of_credits` | no | `ESCALATED` |
+| `suspended` | `usage_limit_exceeded`, `out_of_credits` | yes | `PR_OPENED` |
+| `suspended` | other | any | no change |
+| `error` | — | no | `FAILED` |
+| `error` | — | yes | `PR_OPENED` |
+| `exit` | — | yes | `READY_FOR_REVIEW` |
+| `exit` | — | no | `FAILED` (or `ESCALATED` if blocked) |
+| unknown | — | — | no change (logged) |
+
+`status_detail` values (`working`, `waiting_for_user`, `waiting_for_approval`, etc.) are stored as-is and shown in the Dashboard Devin column; they do not add new workflow enum values.
+
+**Boundaries:**
+
+- Tasks stop at `PR_OPENED` / `READY_FOR_REVIEW` — merge is **not** inferred from Devin PR state
+- `MERGED`, `merged_at`, and MTTR require verified GitHub merge data (Phase 2C)
+- Transient poll errors preserve task state; repeated failures escalate after `DEVIN_POLL_MAX_FAILURES`
+
+**Not yet implemented (Phase 2C):**
+
+- GitHub signed webhook trigger integration (beyond skeleton)
+- GitHub REST PR state / merge verification
+- CI check_run webhooks and `CI_FAILED` transitions
+- CI failure → same-session `send_message` self-correction loop
+- Automatic merge and issue close
 - Scheduled Devin sessions
 
 ## Known Limitations
 
 - `DEVIN_LIVE_ENABLED` defaults to `false` to prevent accidental ACU spend
-- GitHub client methods raise `NotImplementedError`
-- Session poller is a skeleton
+- GitHub client PR/CI methods raise `NotImplementedError` (Phase 2C)
+- Merge detection and MTTR require verified GitHub merge events (Phase 2C)
 - CI recovery rate uses simplified heuristics without full status history
-- No database migrations (uses `create_all` on startup)
+- Database schema is managed with Alembic (`make migrate` or auto-run on backend startup)
 
 ## Future Extensions
 

@@ -4,18 +4,26 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models.task import RemediationTask, TaskStatus
+from app.models.task import POLLABLE_STATUSES, RemediationTask, TaskStatus
 from app.repositories.tasks import (
     DuplicateDeliveryError,
     IssueAlreadyTrackedError,
     TaskRepository,
 )
+from app.schemas.devin_session import DevinSessionResponse
 from app.schemas.remediation import RemediationCreateRequest, RemediationResponse
 from app.schemas.scan import ScanResult
 from app.schemas.task import RemediationEvent, TaskCreate, TaskResponse
 from app.services.devin import DevinAPIError, DevinClient
 from app.services.github import GitHubClient
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
+from app.services.session_lifecycle import (
+    extract_devin_audit_fields,
+    extract_primary_pull_request,
+    map_devin_session_to_task_status,
+    resolve_exit_escalation_reason,
+    resolve_exit_failure_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +66,7 @@ def _live_mode_message(live_enabled: bool, task: RemediationTask) -> str:
 
 
 def _is_active_devin_status(status: str) -> bool:
-    return status.lower() in {"running", "working", "active"}
+    return status.lower() in {"new", "claimed", "running", "resuming"}
 
 
 class RemediationOrchestrator:
@@ -217,6 +225,77 @@ class RemediationOrchestrator:
             self.handle_retryable_error(claimed_task, str(exc))
             if reraise_devin_errors:
                 raise
+
+    async def sync_task_from_devin(self, task_id: int) -> None:
+        task = self.repo.get_by_id(task_id)
+        if not task:
+            logger.warning("Task not found for session sync", extra={"task_id": task_id})
+            return
+
+        if not task.devin_session_id:
+            return
+
+        if task.status not in POLLABLE_STATUSES:
+            return
+
+        session = await self.devin_client.get_session(task.devin_session_id)
+        self.apply_session_update(task, session)
+
+    def apply_session_update(
+        self, task: RemediationTask, session: DevinSessionResponse
+    ) -> RemediationTask:
+        previous_status = task.status
+        pr = extract_primary_pull_request(session.pull_requests)
+
+        field_updates: dict = extract_devin_audit_fields(session)
+        if session.acus_consumed is not None:
+            field_updates["acu_used"] = session.acus_consumed
+        if pr is not None:
+            field_updates["pr_url"] = pr[0]
+            field_updates["pr_state"] = pr[1]
+        if session.url and session.url != task.devin_session_url:
+            field_updates["devin_session_url"] = session.url
+
+        target_status = map_devin_session_to_task_status(task, session)
+
+        if target_status is None:
+            updated = self.repo.update_task(task, **field_updates)
+            self._log_session_sync(updated, previous_status, previous_status, pr)
+            return updated
+
+        transition_fields = dict(field_updates)
+        failure_reason = resolve_exit_failure_reason(session, pr, target_status)
+        if failure_reason:
+            transition_fields["failure_reason"] = failure_reason
+        escalation_reason = resolve_exit_escalation_reason(session, target_status)
+        if escalation_reason:
+            transition_fields["escalation_reason"] = escalation_reason
+
+        updated = self.transition(task, target_status, **transition_fields)
+        self._log_session_sync(updated, previous_status, target_status, pr)
+        return updated
+
+    def _log_session_sync(
+        self,
+        task: RemediationTask,
+        previous_status: TaskStatus,
+        new_status: TaskStatus,
+        pr: tuple[str, str | None] | None,
+    ) -> None:
+        logger.info(
+            "Task session sync",
+            extra={
+                "task_id": task.id,
+                "github_repository": task.github_repository,
+                "issue_number": task.github_issue_number,
+                "devin_session_id": task.devin_session_id,
+                "previous_status": previous_status.value,
+                "new_status": new_status.value,
+                "pr_url": task.pr_url,
+                "acu_used": task.acu_used,
+                "pr_state": task.pr_state if pr else None,
+            },
+        )
 
     def transition(self, task: RemediationTask, new_status: TaskStatus, **fields) -> RemediationTask:
         logger.info(

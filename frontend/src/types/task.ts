@@ -19,8 +19,14 @@ export interface Task {
   issue_type: string
   devin_session_id: string | null
   devin_session_url: string | null
+  devin_status: string | null
+  devin_status_detail: string | null
+  devin_origin: string | null
+  devin_service_user_id: string | null
+  devin_tags: string | null
   status: TaskStatus
   pr_url: string | null
+  pr_state: string | null
   retry_count: number
   max_retries: number
   started_at: string | null

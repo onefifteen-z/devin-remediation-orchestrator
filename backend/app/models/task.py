@@ -26,6 +26,8 @@ ACTIVE_STATUSES = {
     TaskStatus.CI_FAILED,
 }
 
+POLLABLE_STATUSES = ACTIVE_STATUSES
+
 TERMINAL_STATUSES = {
     TaskStatus.MERGED,
     TaskStatus.FAILED,
@@ -51,12 +53,18 @@ class RemediationTask(Base):
 
     devin_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     devin_session_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    devin_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    devin_status_detail: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    devin_origin: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    devin_service_user_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    devin_tags: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     status: Mapped[TaskStatus] = mapped_column(
         Enum(TaskStatus), default=TaskStatus.RECEIVED, index=True
     )
 
     pr_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    pr_state: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     retry_count: Mapped[int] = mapped_column(Integer, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)

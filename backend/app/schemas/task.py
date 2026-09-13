@@ -38,8 +38,14 @@ class TaskResponse(BaseModel):
     issue_type: str
     devin_session_id: str | None
     devin_session_url: str | None
-    status: TaskStatus
+    devin_status: str | None = None
+    devin_status_detail: str | None = None
+    devin_origin: str | None = None
+    devin_service_user_id: str | None = None
+    devin_tags: str | None = None
+    status: TaskStatus = Field(description="Workflow status (business remediation progress).")
     pr_url: str | None
+    pr_state: str | None = None
     retry_count: int
     max_retries: int
     started_at: datetime | None
@@ -71,8 +77,14 @@ class TaskResponse(BaseModel):
             issue_type=task.issue_type,
             devin_session_id=task.devin_session_id,
             devin_session_url=task.devin_session_url,
+            devin_status=task.devin_status,
+            devin_status_detail=task.devin_status_detail,
+            devin_origin=task.devin_origin,
+            devin_service_user_id=task.devin_service_user_id,
+            devin_tags=task.devin_tags,
             status=task.status,
             pr_url=task.pr_url,
+            pr_state=task.pr_state,
             retry_count=task.retry_count,
             max_retries=task.max_retries,
             started_at=task.started_at,

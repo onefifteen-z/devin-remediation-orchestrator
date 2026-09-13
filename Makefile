@@ -1,4 +1,7 @@
-.PHONY: backend frontend test build up down
+.PHONY: backend frontend test build up down migrate
+
+migrate:
+	cd backend && alembic upgrade head
 
 backend:
 	cd backend && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

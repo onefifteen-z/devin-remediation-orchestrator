@@ -14,6 +14,7 @@ export interface Metrics {
   ci_recovery_rate: number
   total_acu: number
   average_acu_per_task: number
+  tasks_with_prs: number
   failed_tasks: number
   escalated_tasks: number
 }
