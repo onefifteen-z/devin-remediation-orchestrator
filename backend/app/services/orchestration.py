@@ -15,11 +15,15 @@ from app.schemas.remediation import RemediationCreateRequest, RemediationRespons
 from app.schemas.scan import ScanResult
 from app.schemas.task import RemediationEvent, TaskCreate, TaskResponse
 from app.services.devin import DevinAPIError, DevinClient
+from app.repositories.webhook_deliveries import WebhookDeliveryRepository
+from app.schemas.github_events import PullRequestEvent, extract_issue_type
 from app.services.github import GitHubClient
+from app.services.github_events import find_task_for_pr
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
 from app.services.session_lifecycle import (
     extract_devin_audit_fields,
     extract_primary_pull_request,
+    is_valid_status_transition,
     map_devin_session_to_task_status,
     resolve_exit_escalation_reason,
     resolve_exit_failure_reason,
@@ -32,14 +36,6 @@ class ConcurrencyLimitError(Exception):
     pass
 
 
-def _extract_issue_type(labels: list[dict], remediate_label: str) -> str:
-    for label in labels:
-        name = label.get("name", "")
-        if name != remediate_label:
-            return name
-    return "unknown"
-
-
 def _issue_key(repository: str, issue_number: int) -> str:
     return f"{repository}#{issue_number}"
 
@@ -47,6 +43,7 @@ def _issue_key(repository: str, issue_number: int) -> str:
 def _normalize_api_request(request: RemediationCreateRequest) -> RemediationEvent:
     return RemediationEvent(
         github_delivery_id=f"api:{request.repository}:{request.issue_number}",
+        source="api",
         github_repository=request.repository,
         github_issue_number=request.issue_number,
         github_issue_url=request.issue_url,
@@ -80,6 +77,7 @@ class RemediationOrchestrator:
         self.db = db
         self.settings = settings
         self.repo = TaskRepository(db)
+        self.webhook_repo = WebhookDeliveryRepository(db)
         self.devin_client = devin_client or DevinClient(settings)
         self.github_client = github_client or GitHubClient(settings)
 
@@ -136,11 +134,12 @@ class RemediationOrchestrator:
                 result.scanned += 1
                 event = RemediationEvent(
                     github_delivery_id=f"manual:{repository}:{issue['number']}",
+                    source="scan",
                     github_repository=repository,
                     github_issue_number=issue["number"],
                     github_issue_url=issue["html_url"],
                     issue_title=issue["title"],
-                    issue_type=_extract_issue_type(issue.get("labels", []), label),
+                    issue_type=extract_issue_type(issue.get("labels", []), label),
                 )
                 task, status = self.ensure_task_for_issue(event)
                 if status == "created":
@@ -296,6 +295,173 @@ class RemediationOrchestrator:
                 "pr_state": task.pr_state if pr else None,
             },
         )
+
+    def handle_pull_request_event(self, event: PullRequestEvent) -> tuple[str, int | None]:
+        task = find_task_for_pr(
+            self.repo,
+            event.repository,
+            event.pr_url,
+            event.pr_number,
+        )
+        if task is None:
+            logger.info(
+                "github_event_received",
+                extra={
+                    "event": event.event_type,
+                    "action": event.action,
+                    "delivery_id": event.delivery_id,
+                    "repository": event.repository,
+                    "pr_url": event.pr_url,
+                    "task_id": None,
+                    "merged": event.merged,
+                    "outcome": "ignored_no_task",
+                },
+            )
+            return "ignored", None
+
+        self._log_github_pr_event(event, task)
+
+        if event.action in {"opened", "reopened"}:
+            return self._handle_pr_opened(task, event), task.id
+        if event.action == "synchronize":
+            return self._handle_pr_synchronize(task, event), task.id
+        if event.action == "closed":
+            if event.merged:
+                return self._handle_pr_merged(task, event), task.id
+            return self._handle_pr_closed_without_merge(task, event), task.id
+
+        self.repo.update_task(
+            task,
+            pr_url=event.pr_url,
+            pr_state=event.pr_state,
+        )
+        return "processed", task.id
+
+    def _log_github_pr_event(self, event: PullRequestEvent, task: RemediationTask) -> None:
+        logger.info(
+            "github_event_received",
+            extra={
+                "event": event.event_type,
+                "action": event.action,
+                "delivery_id": event.delivery_id,
+                "repository": event.repository,
+                "pr_url": event.pr_url,
+                "task_id": task.id,
+                "merged": event.merged,
+            },
+        )
+
+    def _handle_pr_opened(self, task: RemediationTask, event: PullRequestEvent) -> str:
+        fields = {"pr_url": event.pr_url, "pr_state": event.pr_state}
+        if is_valid_status_transition(task.status, TaskStatus.PR_OPENED):
+            self.transition(task, TaskStatus.PR_OPENED, **fields)
+        else:
+            self.repo.update_task(task, **fields)
+        return "processed"
+
+    def _handle_pr_synchronize(self, task: RemediationTask, event: PullRequestEvent) -> str:
+        self.repo.update_task(
+            task,
+            pr_url=event.pr_url,
+            pr_state=event.pr_state,
+        )
+        return "processed"
+
+    def _handle_pr_closed_without_merge(
+        self, task: RemediationTask, event: PullRequestEvent
+    ) -> str:
+        fields = {
+            "pr_url": event.pr_url,
+            "pr_state": event.pr_state,
+            "escalation_reason": "Pull request closed without merge.",
+        }
+        if is_valid_status_transition(task.status, TaskStatus.ESCALATED):
+            self.transition(task, TaskStatus.ESCALATED, **fields)
+        else:
+            self.repo.update_task(task, **fields)
+        return "processed"
+
+    def _handle_pr_merged(self, task: RemediationTask, event: PullRequestEvent) -> str:
+        if task.status == TaskStatus.MERGED:
+            self.repo.update_task(
+                task,
+                pr_url=event.pr_url,
+                pr_state=event.pr_state,
+            )
+            return "processed"
+
+        merged_at = event.merged_at or datetime.now(UTC)
+        fields = {
+            "pr_url": event.pr_url,
+            "pr_state": event.pr_state,
+            "merged_at": merged_at,
+            "completed_at": merged_at,
+        }
+        if is_valid_status_transition(task.status, TaskStatus.MERGED):
+            self.transition(task, TaskStatus.MERGED, **fields)
+        else:
+            self.repo.update_task(task, status=TaskStatus.MERGED, **fields)
+        return "merged"
+
+    async def post_merge_github_actions(self, task_id: int) -> None:
+        task = self.repo.get_by_id(task_id)
+        if not task or task.status != TaskStatus.MERGED:
+            return
+        if not self.settings.github_token:
+            logger.info(
+                "Skipping post-merge GitHub actions; GITHUB_TOKEN not configured",
+                extra={"task_id": task_id},
+            )
+            return
+        if task.merge_notification_sent:
+            return
+
+        comment_body = self._build_merge_comment(task)
+        try:
+            await self.github_client.create_issue_comment(
+                task.github_repository,
+                task.github_issue_number,
+                comment_body,
+            )
+            self.repo.update_task(task, merge_notification_sent=True)
+            task = self.repo.get_by_id(task_id)
+        except Exception:
+            logger.exception(
+                "Failed to post merge notification comment",
+                extra={"task_id": task_id, "issue_number": task.github_issue_number},
+            )
+
+        refreshed = self.repo.get_by_id(task_id)
+        if refreshed is None:
+            return
+
+        try:
+            issue = await self.github_client.get_issue(
+                refreshed.github_repository,
+                refreshed.github_issue_number,
+            )
+            if issue.get("state") != "closed":
+                await self.github_client.close_issue(
+                    refreshed.github_repository,
+                    refreshed.github_issue_number,
+                )
+        except Exception:
+            logger.exception(
+                "Failed to close originating issue after merge",
+                extra={"task_id": task_id, "issue_number": refreshed.github_issue_number},
+            )
+
+    def _build_merge_comment(self, task: RemediationTask) -> str:
+        lines = [
+            "Remediation completed.",
+            f"Pull request: {task.pr_url}",
+            "Status: merged",
+        ]
+        if task.devin_session_url:
+            lines.append(f"Devin session: {task.devin_session_url}")
+        if task.acu_used is not None:
+            lines.append(f"ACU consumed: {task.acu_used}")
+        return "\n".join(lines)
 
     def transition(self, task: RemediationTask, new_status: TaskStatus, **fields) -> RemediationTask:
         logger.info(

@@ -39,13 +39,32 @@ GitHub Issue (devin-remediate label)
 
 See [docs/architecture.md](docs/architecture.md) for detailed design.
 
-## Event-Driven Lifecycle
+## GitHub Event-Driven Workflow
 
 ```
-Issue → Webhook → Orchestrator → Devin → PR → CI → Review → Merge
+Issue
+  → devin-remediate label
+  → signed webhook (issues/labeled)
+  → Orchestrator
+  → Devin V3 session
+  → PR created
+  → signed webhook (pull_request)
+  → GitHub lifecycle updates
+  → Merge verified
+  → Metrics (merge rate, MTTR)
 ```
 
-Phase 1 implements the foundation through webhook ingestion and task persistence. Phase 2A adds `POST /api/remediations` for manual remediation with live Devin V3 session creation gated behind `DEVIN_LIVE_ENABLED=false` by default.
+Phase 1 implements webhook ingestion and task persistence. Phase 2A adds `POST /api/remediations`. Phase 2B adds Devin session polling and PR detection. Phase 2C makes GitHub the authoritative source for PR/merge lifecycle state.
+
+### Three distinct trust relationships
+
+| Credential | Direction | Purpose |
+|------------|-----------|---------|
+| `GITHUB_WEBHOOK_SECRET` | GitHub → Orchestrator | Verifies webhook authenticity (HMAC-SHA256) |
+| `GITHUB_TOKEN` | Orchestrator → GitHub | REST API: issue comments, issue close, PR fetch |
+| Devin GitHub integration | Devin → GitHub | Devin's connected repo access for engineering work |
+
+These are separate credentials with separate trust boundaries. Never expose any of them to the frontend.
 
 ## Repository Structure
 
@@ -123,8 +142,8 @@ without deleting its existing data.
 | `DEVIN_ORG_ID` | Organization ID |
 | `DEVIN_API_BASE_URL` | Default: `https://api.devin.ai/v3` |
 | `DEVIN_LIVE_ENABLED` | `false` by default (safe mode — no live Devin API calls) |
-| `GITHUB_TOKEN` | GitHub PAT for REST API and manual issue scan |
-| `GITHUB_WEBHOOK_SECRET` | Webhook HMAC secret |
+| `GITHUB_TOKEN` | GitHub PAT for Orchestrator → GitHub REST (issue comment/close, PR fetch, manual scan). Requires `issues:write` for comment/close; `pull_requests:read` for PR fetch. |
+| `GITHUB_WEBHOOK_SECRET` | Secret for verifying GitHub → Orchestrator webhook signatures |
 | `GITHUB_SCAN_REPOSITORIES` | Comma-separated repos to scan (e.g. `owner/superset`) |
 | `REMEDIATE_LABEL` | Label to scan for (default: `devin-remediate`) |
 | `DATABASE_URL` | Default: `sqlite:///./data/app.db` |
@@ -171,9 +190,18 @@ pytest -v
    - **Payload URL:** `https://<your-host>/webhooks/github`
    - **Content type:** `application/json`
    - **Secret:** same value as `GITHUB_WEBHOOK_SECRET`
-   - **Events:** Issues
+   - **Events:** Issues, Pull requests
 
 2. Add the `devin-remediate` label to an issue to trigger remediation.
+
+For real GitHub.com integration via tunnel (ngrok / Cloudflare Tunnel):
+
+1. Start backend on `localhost:8000`
+2. Start tunnel: `ngrok http 8000` (or equivalent)
+3. Configure webhook Payload URL: `https://<tunnel>/webhooks/github`
+4. Set `DEVIN_LIVE_ENABLED=false` initially and verify task creation without Devin
+5. Enable `DEVIN_LIVE_ENABLED=true` for a new issue to create a real Devin session
+6. After Devin opens a PR, merge webhooks update the same task to `MERGED`
 
 ## Manual Issue Scan (Backfill)
 
@@ -229,6 +257,23 @@ curl -X POST http://localhost:8000/webhooks/github \
   -d "$BODY"
 ```
 
+### Simulate a PR merge webhook locally
+
+```bash
+SECRET="test-webhook-secret"
+BODY='{"action":"closed","number":123,"pull_request":{"number":123,"html_url":"https://github.com/owner/superset/pull/123","state":"closed","merged":true,"merged_at":"2026-03-13T12:00:00Z","head":{"sha":"abc123"}},"repository":{"full_name":"owner/superset"}}'
+SIG="sha256=$(echo -n "$BODY" | openssl dgst -sha256 -hmac "$SECRET" | awk '{print $2}')"
+
+curl -X POST http://localhost:8000/webhooks/github \
+  -H "Content-Type: application/json" \
+  -H "X-GitHub-Event: pull_request" \
+  -H "X-GitHub-Delivery: pr-delivery-001" \
+  -H "X-Hub-Signature-256: $SIG" \
+  -d "$BODY"
+```
+
+A matching remediation task (same repo + PR URL) must exist for PR webhooks to update lifecycle state.
+
 ## Task Lifecycle
 
 | Status | Meaning |
@@ -255,7 +300,7 @@ The dashboard and `GET /api/metrics` expose:
 - Tasks with PRs
 - Active, failed, escalated task counts
 
-All metrics are computed from real database state—empty when no tasks exist. Merge rate and median MTTR remain zero/null until a task reaches verified `MERGED` status (Phase 2C).
+All metrics are computed from real database state—empty when no tasks exist. Merge rate and median MTTR update when GitHub-verified `MERGED` tasks exist (via `pull_request` webhook with `merged=true`).
 
 ## Security Model
 
@@ -300,7 +345,7 @@ All metrics are computed from real database state—empty when no tasks exist. M
 - Feature flag gating (`DEVIN_LIVE_ENABLED=false` by default)
 - Orchestrator and API tests with mocked Devin responses
 
-## Phase 2B Status (Current)
+## Phase 2B Status
 
 **Session lifecycle tracking — implemented:**
 
@@ -334,26 +379,43 @@ All metrics are computed from real database state—empty when no tasks exist. M
 
 `status_detail` values (`working`, `waiting_for_user`, `waiting_for_approval`, etc.) are stored as-is and shown in the Dashboard Devin column; they do not add new workflow enum values.
 
-**Boundaries:**
-
-- Tasks stop at `PR_OPENED` / `READY_FOR_REVIEW` — merge is **not** inferred from Devin PR state
-- `MERGED`, `merged_at`, and MTTR require verified GitHub merge data (Phase 2C)
 - Transient poll errors preserve task state; repeated failures escalate after `DEVIN_POLL_MAX_FAILURES`
 
-**Not yet implemented (Phase 2C):**
+## Phase 2C Status (Current)
 
-- GitHub signed webhook trigger integration (beyond skeleton)
-- GitHub REST PR state / merge verification
-- CI check_run webhooks and `CI_FAILED` transitions
-- CI failure → same-session `send_message` self-correction loop
-- Automatic merge and issue close
+**GitHub event-driven lifecycle — implemented:**
+
+- `issues` / `labeled` / `devin-remediate` webhook trigger (async dispatch)
+- `pull_request` webhook support: `opened`, `reopened`, `synchronize`, `closed`
+- HMAC-SHA256 verification with constant-time comparison
+- Webhook delivery deduplication via `github_webhook_deliveries` table
+- Normalized `RemediationEvent` and `PullRequestEvent` domain events
+- PR → task association using an already-persisted exact PR URL or repository + PR number
+- GitHub-authoritative `pr_state`, merge detection (`merged=true` only)
+- `MERGED` transition with GitHub `merged_at` timestamp
+- Post-merge issue comment and issue close via `GITHUB_TOKEN` (async, failure-safe)
+- Merge rate and median MTTR metrics from verified `MERGED` tasks
+- Dashboard shows Merged At column
+
+**Status authority:**
+
+| Dimension | Source | Examples |
+|-----------|--------|----------|
+| Workflow `status` | Orchestrator business logic | `RUNNING`, `PR_OPENED`, `MERGED` |
+| Devin execution | Devin V3 session poll | `running`, `exit`, `suspended` |
+| GitHub PR state | GitHub `pull_request` webhooks | `open`, `closed`, `merged` |
+
+**Not yet implemented (Phase 3):**
+
+- CI `check_run` / `workflow_run` webhooks and `CI_FAILED` transitions
+- CI failure classification and same-session `send_message` self-correction
 - Scheduled Devin sessions
 
 ## Known Limitations
 
 - `DEVIN_LIVE_ENABLED` defaults to `false` to prevent accidental ACU spend
-- GitHub client PR/CI methods raise `NotImplementedError` (Phase 2C)
-- Merge detection and MTTR require verified GitHub merge events (Phase 2C)
+- A PR webhook received before Devin polling persists the task's PR URL is safely ignored
+- Post-merge comment/close requires `GITHUB_TOKEN`; API failures are logged, not auto-retried
 - CI recovery rate uses simplified heuristics without full status history
 - Database schema is managed with Alembic (`make migrate` or auto-run on backend startup)
 

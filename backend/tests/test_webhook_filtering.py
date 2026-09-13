@@ -23,21 +23,41 @@ def test_irrelevant_event_ignored(client, webhook_secret):
     payload = {"action": "opened", "repository": {"full_name": "owner/repo"}}
     response = _post(client, payload, "push", "delivery-push-001", webhook_secret)
     assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
+    assert response.json()["outcome"] == "ignored"
 
 
 def test_issue_without_remediate_label_ignored(client, webhook_secret):
     payload = make_issue_labeled_payload(label="bug")
     response = _post(client, payload, "issues", "delivery-no-label-001", webhook_secret)
     assert response.status_code == 200
-    assert response.json()["status"] == "ignored"
+    assert response.json()["outcome"] == "ignored"
 
 
 def test_correct_labeled_issue_accepted(client, webhook_secret):
     payload = make_issue_labeled_payload()
     response = _post(client, payload, "issues", "delivery-accepted-001", webhook_secret)
-    assert response.status_code == 200
+    assert response.status_code == 202
     data = response.json()
-    assert data["status"] == "accepted"
-    assert data["task"]["github_issue_number"] == 44176
-    assert data["task"]["status"] == "RECEIVED"
+    assert data["outcome"] == "accepted"
+    assert "task_id" in data
+
+    tasks = client.get("/api/tasks").json()
+    assert tasks["total"] == 1
+    assert tasks["items"][0]["github_issue_number"] == 44176
+    assert tasks["items"][0]["status"] == "RECEIVED"
+
+
+def test_issues_opened_ignored(client, webhook_secret):
+    payload = {
+        "action": "opened",
+        "issue": {
+            "number": 1,
+            "title": "Opened issue",
+            "html_url": "https://github.com/owner/repo/issues/1",
+            "labels": [],
+        },
+        "repository": {"full_name": "owner/repo"},
+    }
+    response = _post(client, payload, "issues", "delivery-opened-001", webhook_secret)
+    assert response.status_code == 200
+    assert response.json()["outcome"] == "ignored"

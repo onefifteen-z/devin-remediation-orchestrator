@@ -23,5 +23,5 @@ def test_webhook_skips_issue_already_created_by_scan(client, webhook_secret, db_
 
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "duplicate"
+    assert data["outcome"] == "duplicate"
     assert client.get("/api/tasks").json()["total"] == 1

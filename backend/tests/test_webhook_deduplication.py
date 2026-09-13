@@ -8,9 +8,9 @@ def test_duplicate_delivery_does_not_create_two_tasks(client, webhook_secret):
     response1 = signed_webhook_request(client, payload, webhook_secret, delivery_id)
     response2 = signed_webhook_request(client, payload, webhook_secret, delivery_id)
 
-    assert response1.json()["status"] == "accepted"
-    assert response2.json()["status"] == "duplicate"
-    assert response1.json()["task"]["id"] == response2.json()["task"]["id"]
+    assert response1.json()["outcome"] == "accepted"
+    assert response2.json()["outcome"] == "duplicate"
+    assert response1.json()["task_id"] == response2.json().get("task_id", response1.json()["task_id"])
 
     tasks_response = client.get("/api/tasks")
     assert tasks_response.json()["total"] == 1

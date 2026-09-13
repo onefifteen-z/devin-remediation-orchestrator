@@ -1,0 +1,17 @@
+{
+  "action": "closed",
+  "number": 123,
+  "pull_request": {
+    "number": 123,
+    "html_url": "https://github.com/owner/superset/pull/123",
+    "state": "closed",
+    "merged": false,
+    "merged_at": null,
+    "head": {
+      "sha": "abc123def456"
+    }
+  },
+  "repository": {
+    "full_name": "owner/superset"
+  }
+}

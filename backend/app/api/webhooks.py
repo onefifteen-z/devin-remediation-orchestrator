@@ -1,12 +1,17 @@
 import json
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
 from app.database import get_db, get_session_factory
-from app.repositories.tasks import DuplicateDeliveryError, IssueAlreadyTrackedError
+from app.repositories.webhook_deliveries import WebhookDeliveryAlreadyProcessedError
+from app.schemas.github_events import (
+    REMEDIATE_LABEL,
+    normalize_issue_event,
+    normalize_pull_request_event,
+)
 from app.schemas.task import RemediationEvent, TaskResponse
 from app.services.orchestration import RemediationOrchestrator
 from app.utils.security import verify_github_signature
@@ -14,16 +19,6 @@ from app.utils.security import verify_github_signature
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
-
-REMEDIATE_LABEL = "devin-remediate"
-
-
-def _extract_issue_type(labels: list[dict]) -> str:
-    for label in labels:
-        name = label.get("name", "")
-        if name != REMEDIATE_LABEL:
-            return name
-    return "unknown"
 
 
 def _is_remediation_trigger(event: str, payload: dict) -> bool:
@@ -33,20 +28,6 @@ def _is_remediation_trigger(event: str, payload: dict) -> bool:
         return False
     label = payload.get("label", {})
     return label.get("name") == REMEDIATE_LABEL
-
-
-def _normalize_event(delivery_id: str, payload: dict) -> RemediationEvent:
-    issue = payload["issue"]
-    repository = payload["repository"]["full_name"]
-    labels = issue.get("labels", [])
-    return RemediationEvent(
-        github_delivery_id=delivery_id,
-        github_repository=repository,
-        github_issue_number=issue["number"],
-        github_issue_url=issue["html_url"],
-        issue_title=issue.get("title", ""),
-        issue_type=_extract_issue_type(labels),
-    )
 
 
 async def _process_task_background(task_id: int) -> None:
@@ -61,6 +42,101 @@ async def _process_task_background(task_id: int) -> None:
         db.close()
 
 
+async def _post_merge_actions_background(task_id: int) -> None:
+    db = get_session_factory()()
+    try:
+        settings = get_settings()
+        orchestrator = RemediationOrchestrator(db, settings)
+        await orchestrator.post_merge_github_actions(task_id)
+    except Exception:
+        logger.exception("Post-merge GitHub actions failed", extra={"task_id": task_id})
+    finally:
+        db.close()
+
+
+def _handle_issue_event(
+    orchestrator: RemediationOrchestrator,
+    delivery_id: str,
+    payload: dict,
+    background_tasks: BackgroundTasks,
+) -> tuple[dict, int]:
+    if not _is_remediation_trigger("issues", payload):
+        orchestrator.webhook_repo.record(
+            delivery_id,
+            event_type="issues",
+            action=payload.get("action"),
+            repository=payload.get("repository", {}).get("full_name"),
+            outcome="ignored",
+        )
+        return {"outcome": "ignored"}, 200
+
+    event = RemediationEvent(**normalize_issue_event(delivery_id, payload))
+    task, outcome = orchestrator.handle_webhook_event(event)
+
+    if outcome == "skipped":
+        orchestrator.webhook_repo.record(
+            delivery_id,
+            event_type="issues",
+            action=event.action,
+            repository=event.github_repository,
+            task_id=task.id,
+            outcome="duplicate",
+        )
+        return {"outcome": "duplicate", "task_id": task.id}, 200
+
+    orchestrator.webhook_repo.record(
+        delivery_id,
+        event_type="issues",
+        action=event.action,
+        repository=event.github_repository,
+        task_id=task.id,
+        outcome="accepted",
+    )
+
+    logger.info(
+        "Remediation task created",
+        extra={
+            "task_id": task.id,
+            "github_delivery_id": event.github_delivery_id,
+            "repository": event.github_repository,
+            "issue_number": event.github_issue_number,
+        },
+    )
+
+    background_tasks.add_task(_process_task_background, task.id)
+    return {"outcome": "accepted", "task_id": task.id}, 202
+
+
+def _handle_pull_request_event(
+    orchestrator: RemediationOrchestrator,
+    delivery_id: str,
+    payload: dict,
+    background_tasks: BackgroundTasks,
+) -> tuple[dict, int]:
+    event = normalize_pull_request_event(delivery_id, payload)
+    outcome, task_id = orchestrator.handle_pull_request_event(event)
+
+    orchestrator.webhook_repo.record(
+        delivery_id,
+        event_type=event.event_type,
+        action=event.action,
+        repository=event.repository,
+        task_id=task_id,
+        outcome=outcome,
+    )
+
+    if outcome == "ignored":
+        return {"outcome": "ignored"}, 200
+
+    response: dict = {"outcome": outcome}
+    if task_id is not None:
+        response["task_id"] = task_id
+    if outcome == "merged" and task_id is not None:
+        background_tasks.add_task(_post_merge_actions_background, task_id)
+
+    return response, 200
+
+
 @router.post("/github")
 async def github_webhook(
     request: Request,
@@ -70,7 +146,7 @@ async def github_webhook(
     x_github_event: str | None = Header(default=None, alias="X-GitHub-Event"),
     x_github_delivery: str | None = Header(default=None, alias="X-GitHub-Delivery"),
     x_hub_signature_256: str | None = Header(default=None, alias="X-Hub-Signature-256"),
-) -> dict:
+) -> Response:
     body = await request.body()
 
     if not verify_github_signature(body, x_hub_signature_256, settings.github_webhook_secret):
@@ -84,44 +160,44 @@ async def github_webhook(
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from None
 
-    if not _is_remediation_trigger(x_github_event or "", payload):
-        return {"status": "ignored", "reason": "not a remediation trigger"}
-
-    event = _normalize_event(x_github_delivery, payload)
     orchestrator = RemediationOrchestrator(db, settings)
 
+    if orchestrator.webhook_repo.is_processed(x_github_delivery):
+        return Response(
+            content=json.dumps({"outcome": "duplicate"}),
+            status_code=200,
+            media_type="application/json",
+        )
+
+    event_type = x_github_event or ""
+
     try:
-        task, outcome = orchestrator.handle_webhook_event(event)
-    except DuplicateDeliveryError as exc:
-        return {
-            "status": "duplicate",
-            "task": TaskResponse.from_orm_task(exc.existing_task).model_dump(),
-        }
-    except IssueAlreadyTrackedError as exc:
-        return {
-            "status": "duplicate",
-            "task": TaskResponse.from_orm_task(exc.existing_task).model_dump(),
-        }
+        if event_type == "issues":
+            response_body, status_code = _handle_issue_event(
+                orchestrator, x_github_delivery, payload, background_tasks
+            )
+        elif event_type == "pull_request":
+            response_body, status_code = _handle_pull_request_event(
+                orchestrator, x_github_delivery, payload, background_tasks
+            )
+        else:
+            orchestrator.webhook_repo.record(
+                x_github_delivery,
+                event_type=event_type,
+                action=payload.get("action"),
+                repository=payload.get("repository", {}).get("full_name"),
+                outcome="ignored",
+            )
+            response_body, status_code = {"outcome": "ignored"}, 200
+    except WebhookDeliveryAlreadyProcessedError:
+        return Response(
+            content=json.dumps({"outcome": "duplicate"}),
+            status_code=200,
+            media_type="application/json",
+        )
 
-    if outcome == "skipped":
-        return {
-            "status": "duplicate",
-            "task": TaskResponse.from_orm_task(task).model_dump(),
-        }
-
-    logger.info(
-        "Remediation task created",
-        extra={
-            "task_id": task.id,
-            "github_delivery_id": event.github_delivery_id,
-            "repository": event.github_repository,
-            "issue_number": event.github_issue_number,
-        },
+    return Response(
+        content=json.dumps(response_body),
+        status_code=status_code,
+        media_type="application/json",
     )
-
-    background_tasks.add_task(_process_task_background, task.id)
-
-    return {
-        "status": "accepted",
-        "task": TaskResponse.from_orm_task(task).model_dump(),
-    }
