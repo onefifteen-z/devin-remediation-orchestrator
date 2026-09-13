@@ -5,6 +5,7 @@ from app.repositories.tasks import TaskRepository
 from app.schemas.devin_session import DevinPullRequest, DevinSessionResponse
 from app.schemas.task import TaskCreate
 from app.services.session_lifecycle import (
+    extract_devin_audit_fields,
     extract_primary_pull_request,
     map_devin_session_to_task_status,
 )
@@ -45,17 +46,14 @@ def _session(status: str, **kwargs) -> DevinSessionResponse:
         ("claimed", TaskStatus.SESSION_CREATED, TaskStatus.SESSION_CREATED),
         ("running", TaskStatus.SESSION_CREATED, TaskStatus.RUNNING),
         ("resuming", TaskStatus.RUNNING, TaskStatus.RUNNING),
-        ("suspended", TaskStatus.RUNNING, TaskStatus.RUNNING),
+        ("suspended", TaskStatus.RUNNING, None),
         ("error", TaskStatus.RUNNING, TaskStatus.FAILED),
     ],
 )
 def test_status_mapping_documented_values(db_session, devin_status, task_status, expected):
     task = _task(db_session, task_status)
     result = map_devin_session_to_task_status(task, _session(devin_status))
-    if expected == task_status:
-        assert result is None
-    else:
-        assert result == expected
+    assert result == expected
 
 
 def test_status_mapping_running_with_pr(db_session):
@@ -100,6 +98,65 @@ def test_status_mapping_exit_with_blocked_structured_output(db_session):
 def test_status_mapping_unknown_status(db_session):
     task = _task(db_session, TaskStatus.RUNNING)
     assert map_devin_session_to_task_status(task, _session("completed")) is None
+
+
+def test_status_mapping_suspended_usage_limit_escalates(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session("suspended", status_detail="usage_limit_exceeded")
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.ESCALATED
+
+
+def test_status_mapping_suspended_usage_limit_with_pr_stays_pr_opened(db_session):
+    task = _task(db_session, TaskStatus.PR_OPENED)
+    session = _session(
+        "suspended",
+        status_detail="usage_limit_exceeded",
+        pull_requests=[DevinPullRequest(pr_url="https://github.com/org/repo/pull/1", pr_state="open")],
+    )
+    assert map_devin_session_to_task_status(task, session) is None
+
+
+def test_status_mapping_suspended_inactivity_no_change(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session("suspended", status_detail="inactivity")
+    assert map_devin_session_to_task_status(task, session) is None
+
+
+def test_status_mapping_suspended_from_session_created_no_change(db_session):
+    task = _task(db_session, TaskStatus.SESSION_CREATED)
+    session = _session("suspended", status_detail="inactivity")
+    assert map_devin_session_to_task_status(task, session) is None
+
+
+def test_status_mapping_error_with_pr_stays_pr_opened(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session(
+        "error",
+        pull_requests=[DevinPullRequest(pr_url="https://github.com/org/repo/pull/1", pr_state="open")],
+    )
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.PR_OPENED
+
+
+def test_status_mapping_running_waiting_for_user_stays_running(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session("running", status_detail="waiting_for_user")
+    assert map_devin_session_to_task_status(task, session) is None
+
+
+def test_extract_devin_audit_fields():
+    session = _session(
+        "running",
+        status_detail="working",
+        origin="api",
+        service_user_id="svc-123",
+        tags=["source=github"],
+    )
+    fields = extract_devin_audit_fields(session)
+    assert fields["devin_status"] == "running"
+    assert fields["devin_status_detail"] == "working"
+    assert fields["devin_origin"] == "api"
+    assert fields["devin_service_user_id"] == "svc-123"
+    assert '"source=github"' in fields["devin_tags"]
 
 
 def test_extract_primary_pull_request_none():

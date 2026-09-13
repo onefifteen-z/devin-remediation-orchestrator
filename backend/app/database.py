@@ -42,10 +42,23 @@ def get_session_factory():
     return _SessionLocal
 
 
-def init_db() -> None:
-    from app.models.task import RemediationTask  # noqa: F401
+def run_migrations() -> None:
+    from pathlib import Path
 
-    Base.metadata.create_all(bind=get_engine())
+    from alembic import command
+    from alembic.config import Config
+
+    settings = get_settings()
+    _ensure_data_dir(settings.database_url)
+
+    backend_root = Path(__file__).resolve().parent.parent
+    alembic_cfg = Config(str(backend_root / "alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", settings.database_url)
+    command.upgrade(alembic_cfg, "head")
+
+
+def init_db() -> None:
+    run_migrations()
 
 
 def get_db() -> Generator[Session, None, None]:

@@ -18,6 +18,7 @@ from app.services.devin import DevinAPIError, DevinClient
 from app.services.github import GitHubClient
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
 from app.services.session_lifecycle import (
+    extract_devin_audit_fields,
     extract_primary_pull_request,
     map_devin_session_to_task_status,
     resolve_exit_escalation_reason,
@@ -246,7 +247,7 @@ class RemediationOrchestrator:
         previous_status = task.status
         pr = extract_primary_pull_request(session.pull_requests)
 
-        field_updates: dict = {}
+        field_updates: dict = extract_devin_audit_fields(session)
         if session.acus_consumed is not None:
             field_updates["acu_used"] = session.acus_consumed
         if pr is not None:
@@ -258,11 +259,9 @@ class RemediationOrchestrator:
         target_status = map_devin_session_to_task_status(task, session)
 
         if target_status is None:
-            if field_updates:
-                updated = self.repo.update_task(task, **field_updates)
-                self._log_session_sync(updated, previous_status, previous_status, pr)
-                return updated
-            return task
+            updated = self.repo.update_task(task, **field_updates)
+            self._log_session_sync(updated, previous_status, previous_status, pr)
+            return updated
 
         transition_fields = dict(field_updates)
         failure_reason = resolve_exit_failure_reason(session, pr, target_status)

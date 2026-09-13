@@ -96,8 +96,27 @@ Dashboard: http://localhost:3000
 make backend    # start backend
 make frontend   # start frontend
 make test       # run backend tests
+make migrate    # apply Alembic migrations to head
 make up         # docker compose up --build
 make down       # docker compose down
+```
+
+### Database migrations
+
+Schema changes are managed with [Alembic](https://alembic.sqlalchemy.org/) under `backend/alembic/`.
+
+```bash
+cd backend
+alembic upgrade head          # apply pending migrations
+alembic revision -m "message" # create a new migration (autogenerate: add --autogenerate)
+```
+
+Migrations run automatically when the backend starts. For an existing database created before Alembic was introduced:
+
+```bash
+cd backend
+alembic stamp 0001            # mark baseline if remediation_tasks already exists
+alembic upgrade head
 ```
 
 ## Backend Environment Variables
@@ -291,22 +310,33 @@ All metrics are computed from real database state—empty when no tasks exist. M
 
 - `DevinClient.get_session()` — typed V3 session detail response with full error handling
 - Background `SessionPoller` — polls active tasks every `DEVIN_SESSION_POLL_INTERVAL_SECONDS` (default 15)
-- Devin fields consumed: `status`, `pull_requests`, `acus_consumed`, `structured_output`
+- Devin fields consumed: `status`, `status_detail`, `origin`, `service_user_id`, `tags`, `pull_requests`, `acus_consumed`, `structured_output`
+- Raw Devin execution state persisted on every poll (`devin_status`, `devin_status_detail`, etc.)
+- Dual-dimension model: `status` = workflow progress; `devin_status` / `devin_status_detail` = agent execution state
 - PR detection from Devin session response (`pr_url`, `pr_state`); first PR wins when multiple exist
 - ACU tracking from `acus_consumed` on every poll
 - Task status updates based on real Devin data (no fake transitions)
+- Dashboard shows workflow status and Devin execution detail separately
 - Live dashboard refresh every 15 seconds via TanStack Query
 
-**Status mapping (Devin → internal):**
+**Workflow mapping (Devin → `status`):**
 
-| Devin | Internal |
-|-------|----------|
-| `new`, `claimed` | `SESSION_CREATED` |
-| `running`, `resuming`, `suspended` | `RUNNING` (or `PR_OPENED` when PR present) |
-| `error` | `FAILED` |
-| `exit` + PR | `READY_FOR_REVIEW` |
-| `exit` + no PR | `FAILED` (or `ESCALATED` if structured output reports blocked) |
-| unknown | no change (logged) |
+| Devin `status` | `status_detail` | PR | Workflow `status` |
+|----------------|-----------------|----|-------------------|
+| `new`, `claimed` | — | no | `SESSION_CREATED` |
+| `new`, `claimed` | — | yes | `PR_OPENED` |
+| `running`, `resuming` | any | no | `RUNNING` |
+| `running`, `resuming` | any | yes | `PR_OPENED` |
+| `suspended` | `usage_limit_exceeded`, `out_of_credits` | no | `ESCALATED` |
+| `suspended` | `usage_limit_exceeded`, `out_of_credits` | yes | `PR_OPENED` |
+| `suspended` | other | any | no change |
+| `error` | — | no | `FAILED` |
+| `error` | — | yes | `PR_OPENED` |
+| `exit` | — | yes | `READY_FOR_REVIEW` |
+| `exit` | — | no | `FAILED` (or `ESCALATED` if blocked) |
+| unknown | — | — | no change (logged) |
+
+`status_detail` values (`working`, `waiting_for_user`, `waiting_for_approval`, etc.) are stored as-is and shown in the Dashboard Devin column; they do not add new workflow enum values.
 
 **Boundaries:**
 
@@ -329,7 +359,7 @@ All metrics are computed from real database state—empty when no tasks exist. M
 - GitHub client PR/CI methods raise `NotImplementedError` (Phase 2C)
 - Merge detection and MTTR require verified GitHub merge events (Phase 2C)
 - CI recovery rate uses simplified heuristics without full status history
-- No database migrations (uses `create_all` on startup; recreate DB when model columns change)
+- Database schema is managed with Alembic (`make migrate` or auto-run on backend startup)
 
 ## Future Extensions
 

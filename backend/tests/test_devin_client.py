@@ -55,6 +55,10 @@ async def test_get_session_success(devin_settings):
                     {"pr_url": "https://github.com/org/repo/pull/1", "pr_state": "open"}
                 ],
                 "acus_consumed": 3.5,
+                "status_detail": "finished",
+                "origin": "api",
+                "service_user_id": "svc-abc",
+                "tags": ["source=github", "workflow=issue-remediation"],
             },
         )
     )
@@ -64,6 +68,10 @@ async def test_get_session_success(devin_settings):
     await client.close()
 
     assert result.status == "exit"
+    assert result.status_detail == "finished"
+    assert result.origin == "api"
+    assert result.service_user_id == "svc-abc"
+    assert result.tags == ["source=github", "workflow=issue-remediation"]
     assert result.acus_consumed == 3.5
     assert len(result.pull_requests) == 1
     assert result.pull_requests[0].pr_url == "https://github.com/org/repo/pull/1"

@@ -1,3 +1,4 @@
+import json
 import logging
 
 from app.models.task import RemediationTask, TaskStatus
@@ -8,6 +9,21 @@ logger = logging.getLogger(__name__)
 
 DOCUMENTED_DEVIN_STATUSES = frozenset(
     {"new", "claimed", "running", "exit", "error", "suspended", "resuming"}
+)
+
+SUSPENDED_ESCALATION_DETAILS = frozenset({"usage_limit_exceeded", "out_of_credits"})
+
+DOCUMENTED_STATUS_DETAILS = frozenset(
+    {
+        "usage_limit_exceeded",
+        "out_of_credits",
+        "user_request",
+        "inactivity",
+        "working",
+        "waiting_for_user",
+        "waiting_for_approval",
+        "finished",
+    }
 )
 
 STATUS_ORDER = {
@@ -36,6 +52,28 @@ def extract_primary_pull_request(
         if pr.pr_url:
             return pr.pr_url, pr.pr_state
     return None
+
+
+def extract_devin_audit_fields(session: DevinSessionResponse) -> dict:
+    """Build DB field updates from raw Devin session state."""
+    if session.status_detail and session.status_detail not in DOCUMENTED_STATUS_DETAILS:
+        logger.warning(
+            "Unknown Devin status_detail",
+            extra={
+                "devin_session_id": session.session_id,
+                "status_detail": session.status_detail,
+            },
+        )
+
+    fields: dict = {
+        "devin_status": session.status,
+        "devin_status_detail": session.status_detail,
+        "devin_origin": session.origin,
+        "devin_service_user_id": session.service_user_id,
+    }
+    if session.tags:
+        fields["devin_tags"] = json.dumps(session.tags)
+    return fields
 
 
 def _parse_structured_output(session: DevinSessionResponse) -> RemediationResult | None:
@@ -68,11 +106,23 @@ def _resolve_exit_status(
     return TaskStatus.FAILED
 
 
+def _resolve_suspended_status(
+    session: DevinSessionResponse,
+    pr: tuple[str, str | None] | None,
+) -> TaskStatus | None:
+    detail = (session.status_detail or "").lower()
+    if detail in SUSPENDED_ESCALATION_DETAILS:
+        if pr is not None:
+            return TaskStatus.PR_OPENED
+        return TaskStatus.ESCALATED
+    return None
+
+
 def map_devin_session_to_task_status(
     task: RemediationTask,
     session: DevinSessionResponse,
 ) -> TaskStatus | None:
-    """Map Devin session state to internal task status. Returns None when unchanged."""
+    """Map Devin session state to workflow status. Returns None when unchanged."""
     devin_status = session.status.lower()
     pr = extract_primary_pull_request(session.pull_requests)
 
@@ -94,13 +144,15 @@ def map_devin_session_to_task_status(
             target = TaskStatus.SESSION_CREATED
         elif pr is not None:
             target = TaskStatus.PR_OPENED
-    elif devin_status in {"running", "resuming", "suspended"}:
+    elif devin_status in {"running", "resuming"}:
         if pr is not None:
             target = TaskStatus.PR_OPENED
         else:
             target = TaskStatus.RUNNING
+    elif devin_status == "suspended":
+        target = _resolve_suspended_status(session, pr)
     elif devin_status == "error":
-        target = TaskStatus.FAILED
+        target = TaskStatus.PR_OPENED if pr is not None else TaskStatus.FAILED
     elif devin_status == "exit":
         target = _resolve_exit_status(session, pr)
 
@@ -153,6 +205,9 @@ def resolve_exit_escalation_reason(
 ) -> str | None:
     if target != TaskStatus.ESCALATED:
         return None
+    detail = (session.status_detail or "").lower()
+    if session.status.lower() == "suspended" and detail in SUSPENDED_ESCALATION_DETAILS:
+        return f"Devin session suspended: {session.status_detail}"
     structured = _parse_structured_output(session)
     if structured and structured.status == "blocked":
         return structured.blocked_reason or "Devin session blocked"

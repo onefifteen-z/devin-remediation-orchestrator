@@ -13,6 +13,10 @@ class DevinSessionResponse(BaseModel):
     session_id: str
     url: str
     status: str
+    status_detail: str | None = None
+    origin: str | None = None
+    service_user_id: str | None = None
+    tags: list[str] = Field(default_factory=list)
     pull_requests: list[DevinPullRequest] = Field(default_factory=list)
     acus_consumed: float | None = None
     structured_output: dict[str, Any] | None = None
@@ -46,10 +50,21 @@ def parse_devin_session_response(data: dict[str, Any]) -> DevinSessionResponse:
     if acus_consumed is not None:
         acus_consumed = float(acus_consumed)
 
+    status_detail = data.get("status_detail")
+    origin = data.get("origin")
+    service_user_id = data.get("service_user_id")
+
+    tags_raw = data.get("tags") or []
+    tags = [str(tag) for tag in tags_raw if tag is not None] if isinstance(tags_raw, list) else []
+
     return DevinSessionResponse(
         session_id=data["session_id"],
         url=data["url"],
         status=str(data.get("status", "unknown")),
+        status_detail=str(status_detail) if status_detail else None,
+        origin=str(origin) if origin else None,
+        service_user_id=str(service_user_id) if service_user_id else None,
+        tags=tags,
         pull_requests=pull_requests,
         acus_consumed=acus_consumed,
         structured_output=structured_output,
