@@ -136,9 +136,10 @@ class RemediationOrchestrator:
         source: str = "scan",
         delivery_prefix: str = "manual",
         run_id: str | None = None,
+        label: str | None = None,
     ) -> ScanResult:
         repositories = self.settings.github_scan_repositories_list()
-        label = self.settings.remediate_label
+        label = label or self.settings.remediate_label
         result = ScanResult()
 
         for repository in repositories:

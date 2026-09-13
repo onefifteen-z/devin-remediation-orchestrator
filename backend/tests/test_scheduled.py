@@ -19,9 +19,11 @@ def test_schedule_prompt_includes_intake_url():
     settings = Settings(
         orchestrator_public_url="https://orchestrator.example.com",
         scheduled_intake_token="secret-token",
+        scheduled_label="devin-scheduled",
     )
     prompt = build_schedule_prompt(settings)
     assert "https://orchestrator.example.com/api/scheduled/intake" in prompt
+    assert "devin-scheduled" in prompt
     assert "secret-token" in prompt
     assert "Do not modify repository code" in prompt
 
@@ -113,7 +115,46 @@ async def test_scheduled_intake_uses_same_orchestration_primitives(client, monke
     kwargs = scan_mock.await_args.kwargs
     assert kwargs["source"] == "scheduled"
     assert kwargs["delivery_prefix"] == "scheduled"
+    assert kwargs["label"] == "devin-scheduled"
     process_mock.assert_called_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_scheduled_scan_uses_scheduled_label(db_session):
+    from unittest.mock import AsyncMock
+
+    from app.services.github import GitHubClient
+    from app.services.orchestration import RemediationOrchestrator
+
+    settings = Settings(
+        github_token="ghp_test",
+        github_scan_repositories="owner/superset",
+        remediate_label="devin-remediate",
+        scheduled_label="devin-scheduled",
+    )
+    mock_github = AsyncMock(spec=GitHubClient)
+    mock_github.list_issues_by_label.return_value = [
+        {
+            "repository": "owner/superset",
+            "number": 300,
+            "title": "Scheduled issue",
+            "html_url": "https://github.com/owner/superset/issues/300",
+            "labels": [{"name": "devin-scheduled"}, {"name": "bug"}],
+        }
+    ]
+
+    orchestrator = RemediationOrchestrator(db_session, settings, github_client=mock_github)
+    await orchestrator.scan_labeled_issues(
+        source="scheduled",
+        delivery_prefix="scheduled",
+        run_id="run1",
+        label=settings.scheduled_label,
+    )
+
+    mock_github.list_issues_by_label.assert_awaited_once_with(
+        "owner/superset",
+        "devin-scheduled",
+    )
 
 
 def test_existing_merged_remediation_not_recreated(db_session):

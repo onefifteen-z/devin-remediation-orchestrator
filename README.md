@@ -145,7 +145,8 @@ without deleting its existing data.
 | `GITHUB_TOKEN` | GitHub PAT for Orchestrator → GitHub REST (issue comment/close, PR fetch, manual scan). Requires `issues:write` for comment/close; `pull_requests:read` for PR fetch. |
 | `GITHUB_WEBHOOK_SECRET` | Secret for verifying GitHub → Orchestrator webhook signatures |
 | `GITHUB_SCAN_REPOSITORIES` | Comma-separated repos to scan (e.g. `owner/superset`) |
-| `REMEDIATE_LABEL` | Label to scan for (default: `devin-remediate`) |
+| `REMEDIATE_LABEL` | Label for webhook and manual scan (default: `devin-remediate`) |
+| `SCHEDULED_LABEL` | Label for scheduled intake only (default: `devin-scheduled`) |
 | `DATABASE_URL` | Default: `sqlite:///./data/app.db` |
 | `MAX_ACTIVE_SESSIONS` | Concurrency limit (default: 3) |
 | `MAX_RETRIES` | Max retries before escalation (default: 3) |
@@ -547,7 +548,7 @@ Local DB remains authoritative for merge rate and MTTR. Devin org consumption su
 
 #### Scheduled Devin
 
-When `DEVIN_SCHEDULED_ENABLED=true` and `DEVIN_LIVE_ENABLED=true`, the orchestrator registers a native Devin schedule whose session calls `POST /api/scheduled/intake` to scan labeled issues using the same idempotent orchestration path.
+When `DEVIN_SCHEDULED_ENABLED=true` and `DEVIN_LIVE_ENABLED=true`, the orchestrator registers a native Devin schedule whose session calls `POST /api/scheduled/intake` to scan issues labeled `devin-scheduled` (configurable via `SCHEDULED_LABEL`) using the same idempotent orchestration path. Webhook and manual scan continue to use `devin-remediate`.
 
 Required configuration:
 

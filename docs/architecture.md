@@ -156,12 +156,12 @@ Structured output informs failure/escalation reasons but does not set `MERGED`. 
 flowchart TB
   SchedAPI[Devin Schedules API] --> DevinSession[Scheduled Devin Session]
   DevinSession -->|POST /api/scheduled/intake| Intake[Orchestrator Intake]
-  Intake --> Scan[scan_labeled_issues]
+  Intake --> Scan["scan_labeled_issues (devin-scheduled)"]
   Scan --> Dedup[repo + issue dedup]
   Dedup --> Process[process_task]
 ```
 
-Same idempotency rules as webhook, manual API, and scan paths.
+Scheduled intake scans issues labeled `devin-scheduled` (`SCHEDULED_LABEL`). Webhook and manual scan use `devin-remediate` (`REMEDIATE_LABEL`). Same idempotency rules apply across all paths.
 
 ## GitHub Integration Boundary
 

@@ -16,7 +16,7 @@ def build_schedule_prompt(settings: Settings) -> str:
         token_clause = (
             f'\nUse header: Authorization: Bearer {settings.scheduled_intake_token}'
         )
-    return f"""Review configured repositories for open issues labeled for remediation intake.
+    return f"""Review configured repositories for open issues labeled `{settings.scheduled_label}`.
 
 Call the orchestrator intake endpoint to enqueue new remediation candidates:
 POST {intake_url}{token_clause}

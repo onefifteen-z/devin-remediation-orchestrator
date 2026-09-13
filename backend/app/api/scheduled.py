@@ -53,6 +53,7 @@ async def scheduled_intake(
             source="scheduled",
             delivery_prefix="scheduled",
             run_id=run_id,
+            label=settings.scheduled_label,
         )
     finally:
         await orchestrator.github_client.close()

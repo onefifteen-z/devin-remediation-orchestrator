@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     github_webhook_secret: str = ""
     github_scan_repositories: str = ""
     remediate_label: str = "devin-remediate"
+    scheduled_label: str = "devin-scheduled"
 
     database_url: str = "sqlite:///./data/app.db"
 
