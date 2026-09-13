@@ -9,11 +9,14 @@ class RemediationEvent(BaseModel):
     """Normalized remediation trigger, decoupled from GitHub payload shape."""
 
     github_delivery_id: str
+    source: str = "github"
     github_repository: str
     github_issue_number: int
     github_issue_url: str
     issue_title: str
+    issue_body: str | None = None
     issue_type: str = "unknown"
+    action: str | None = None
 
 
 class TaskCreate(BaseModel):

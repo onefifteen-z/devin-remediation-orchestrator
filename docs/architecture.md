@@ -40,9 +40,29 @@ flowchart TB
 |------|----------|---------------|
 | Backend | `DEVIN_API_KEY`, `GITHUB_TOKEN`, `GITHUB_WEBHOOK_SECRET` | Via API responses or logs |
 | Frontend | `VITE_API_BASE_URL` only | Any backend secrets |
-| GitHub | Webhook HMAC signatures | Raw secret in payloads |
+| GitHub webhooks | HMAC signatures | Raw secret in payloads |
+
+### Three distinct GitHub trust relationships
+
+| Credential | Direction | Purpose |
+|------------|-----------|---------|
+| `GITHUB_WEBHOOK_SECRET` | GitHub → Orchestrator | Verify webhook authenticity |
+| `GITHUB_TOKEN` | Orchestrator → GitHub | Issue comment, issue close, PR fetch |
+| Devin GitHub integration | Devin → GitHub | Devin's connected repo engineering actions |
 
 ## Event Lifecycle
+
+```mermaid
+flowchart TB
+  Issue[GitHub Issue] -->|devin-remediate label| WH[Signed Webhook]
+  WH --> ORCH[RemediationOrchestrator]
+  ORCH --> Devin[Devin V3]
+  Devin --> PR[GitHub PR]
+  PR -->|pull_request webhook| WH2[Webhook Handler]
+  WH2 --> ORCH
+  ORCH --> Metrics[Metrics / Dashboard]
+  ORCH -->|GITHUB_TOKEN| IssueActions[Issue Comment / Close]
+```
 
 ```mermaid
 sequenceDiagram
@@ -50,18 +70,18 @@ sequenceDiagram
   participant WH as Webhook Handler
   participant ORCH as Orchestrator
   participant Devin as Devin V3
-  participant CI as GitHub CI
+  participant GH as GitHub REST
 
   Issue->>WH: label devin-remediate
-  WH->>ORCH: normalized RemediationEvent
-  ORCH->>Devin: create session (Phase 2)
+  WH->>ORCH: RemediationEvent
+  ORCH->>Devin: create session
   Devin->>Devin: analyze, fix, test, open PR
-  ORCH->>CI: poll / webhook (Phase 2)
-  CI-->>ORCH: failure
-  ORCH->>Devin: send_message same session
-  Devin->>CI: push fix
-  CI-->>ORCH: pass
-  ORCH->>Issue: close / comment (Phase 2)
+  Note over WH,ORCH: pull_request webhook
+  WH->>ORCH: PullRequestEvent opened
+  ORCH->>ORCH: PR_OPENED
+  WH->>ORCH: PullRequestEvent closed merged
+  ORCH->>ORCH: MERGED with GitHub merged_at
+  ORCH->>GH: comment and close issue
 ```
 
 ## Task State Lifecycle
@@ -72,15 +92,25 @@ stateDiagram-v2
   RECEIVED --> SESSION_CREATED: Devin session created
   SESSION_CREATED --> RUNNING: session active
   RUNNING --> PR_OPENED: PR created
-  PR_OPENED --> CI_FAILED: CI fails
-  CI_FAILED --> RUNNING: Devin self-corrects
-  PR_OPENED --> READY_FOR_REVIEW: CI passes
-  CI_FAILED --> READY_FOR_REVIEW: CI passes after fix
-  READY_FOR_REVIEW --> MERGED: human merges
+  PR_OPENED --> READY_FOR_REVIEW: Devin exit + PR
+  READY_FOR_REVIEW --> MERGED: GitHub pull_request merged
+  PR_OPENED --> ESCALATED: PR closed without merge
+  READY_FOR_REVIEW --> ESCALATED: PR closed without merge
   RECEIVED --> FAILED: unrecoverable error
   RUNNING --> ESCALATED: retries/timeout/ACU cap
-  CI_FAILED --> ESCALATED: max retries exceeded
 ```
+
+Phase 3 (not implemented): `CI_FAILED` transitions and Devin `send_message` self-correction loop.
+
+## Status Authority
+
+| Dimension | Authoritative Source | Stored Fields |
+|-----------|---------------------|---------------|
+| Workflow progress | Orchestrator | `status` |
+| Agent execution | Devin V3 session poll | `devin_status`, `devin_status_detail` |
+| PR / merge state | GitHub `pull_request` webhooks | `pr_url`, `pr_state`, `merged_at` |
+
+Devin PR state from session polling is superseded by GitHub webhook data for `pr_state`.
 
 ## Devin Integration Boundary
 
@@ -90,28 +120,41 @@ Verified V3 endpoints (see [Devin API docs](https://docs.devin.ai/api-reference/
 
 - `POST /v3/organizations/{org_id}/sessions` — create session
 - `GET /v3/organizations/{org_id}/sessions/{devin_id}` — get session
-- `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — send follow-up
+- `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — send follow-up (Phase 3)
 
-Phase 1: client implemented; live calls gated by `DEVIN_LIVE_ENABLED=false`.
+Live calls gated by `DEVIN_LIVE_ENABLED=false` by default.
 
 ## GitHub Integration Boundary
 
-- Webhook: HMAC-SHA256 verification via `X-Hub-Signature-256`
-- Deduplication (dual layer):
-  - `X-GitHub-Delivery` — webhook retry dedup
-  - `(github_repository, github_issue_number)` — business unique key across webhook and manual scan
-- Manual scan: `POST /api/scan/github` lists open labeled issues via GitHub REST API
-- REST client in `backend/app/services/github.py` (`list_issues_by_label` implemented; PR/CI methods Phase 2)
+### Webhook layer (thin)
+
+`POST /webhooks/github` responsibilities:
+
+- HMAC-SHA256 verification via `X-Hub-Signature-256`
+- Event routing by `X-GitHub-Event`
+- Payload normalization to domain events
+- Delivery deduplication
+- Dispatch to `RemediationOrchestrator` (no business logic in route)
+
+Supported events:
+
+| Event | Trigger | Action |
+|-------|---------|--------|
+| `issues` | `labeled` + `devin-remediate` | Create remediation task, async Devin dispatch |
+| `pull_request` | `opened`, `reopened`, `synchronize`, `closed` | Update PR metadata, merge lifecycle |
+
+### Deduplication
 
 ```mermaid
 flowchart LR
-  subgraph triggers [Issue Discovery]
-    WH[GitHubWebhook labeled]
-    SCAN[ManualScanButton]
+  subgraph triggers [Trigger Paths]
+    WH[GitHubWebhook]
+    API[ManualAPI]
+    SCAN[ManualScan]
   end
 
   subgraph dedup [Deduplication]
-    D1[delivery_id]
+    D1[github_webhook_deliveries]
     D2[repo_plus_issue_number]
   end
 
@@ -119,21 +162,38 @@ flowchart LR
   DB[(SQLite)]
 
   WH --> D1 --> ORCH
+  API --> D2 --> ORCH
   SCAN --> D2 --> ORCH
   ORCH --> DB
 ```
 
+- `X-GitHub-Delivery` recorded in `github_webhook_deliveries` — prevents duplicate lifecycle transitions
+- `(github_repository, github_issue_number)` — business unique key for task creation
+
+### REST client
+
+`backend/app/services/github.py`:
+
+- `list_issues_by_label` — manual scan
+- `create_issue_comment` — post-merge notification
+- `close_issue` — close originating issue after verified merge
+- `get_issue` — idempotent close check
+- `get_pull_request` — PR state verification helper
+
+Uses `GITHUB_TOKEN` (Orchestrator → GitHub). Separate from Devin's GitHub integration.
+
 ## Persistence
 
 - SQLite via SQLAlchemy 2.x
-- `remediation_tasks` table stores full audit trail
+- `remediation_tasks` — full audit trail
+- `github_webhook_deliveries` — webhook idempotency log
 - Failed and escalated tasks are never auto-deleted
 
-## CI Self-Correction Design (Phase 2)
+## CI Self-Correction Design (Phase 3 — not implemented)
 
 When CI fails on a Devin-opened PR:
 
-1. Orchestrator detects failure (webhook or poll)
+1. Orchestrator detects failure (`check_run` webhook)
 2. Task transitions to `CI_FAILED`
 3. Orchestrator sends CI logs to the **same** Devin session via `send_message`
 4. Devin diagnoses and pushes a fix
@@ -144,22 +204,25 @@ When CI fails on a Devin-opened PR:
 | Metric | Definition |
 |--------|------------|
 | Success Rate | `MERGED / terminal tasks` |
-| Merge Rate | Same as success rate for merged outcomes |
-| Median MTTR | Median of `(merged_at - started_at)` for merged tasks only |
+| Merge Rate | `MERGED / total tasks` (GitHub-verified merges only) |
+| Median MTTR | Median of `(merged_at - started_at)` for `MERGED` tasks only |
 | Throughput | Tasks created in last 7 days |
-| CI Recovery Rate | Tasks that recovered from `CI_FAILED` to `READY_FOR_REVIEW` or `MERGED` |
+| CI Recovery Rate | Heuristic based on `retry_count` (Phase 3 will improve) |
 | Total ACU | Sum of `acu_used` across tasks |
 | Active Sessions | Tasks in `SESSION_CREATED`, `RUNNING`, `PR_OPENED`, `CI_FAILED` |
 
 ## Failure Handling
 
-- Retryable API errors: increment `retry_count`, exponential backoff (Phase 2)
+- Retryable API errors: increment `retry_count`
 - `retry_count >= max_retries` → `ESCALATED`
 - Session timeout → `ESCALATED`
 - ACU budget exceeded → `ESCALATED`
+- PR closed without merge → `ESCALATED`
+- Post-merge GitHub API failures: log, preserve `MERGED` status
 
 ## Future Extension Points
 
+- CI self-correction (Phase 3)
 - Additional event sources (Jira, Linear, security scanners)
 - Multi-repository rollout
 - Policy-based approval gates

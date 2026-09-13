@@ -2,6 +2,7 @@ from sqlalchemy import create_engine, inspect, text
 
 from app.database import Base, _upgrade_database
 from app.models.task import RemediationTask  # noqa: F401
+from app.models.webhook_delivery import WebhookDelivery  # noqa: F401
 
 
 LEGACY_SCHEMA = """
@@ -40,7 +41,7 @@ def test_upgrade_database_bootstraps_new_database(tmp_path):
     inspector = inspect(engine)
     assert inspector.has_table("remediation_tasks")
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003"
 
 
 def test_upgrade_database_stamps_and_migrates_legacy_database(tmp_path):
@@ -59,9 +60,11 @@ def test_upgrade_database_stamps_and_migrates_legacy_database(tmp_path):
         "devin_origin",
         "devin_service_user_id",
         "devin_tags",
+        "merge_notification_sent",
     }.issubset(columns)
+    assert inspect(engine).has_table("github_webhook_deliveries")
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003"
 
 
 def test_upgrade_database_stamps_unversioned_current_schema_at_head(tmp_path):
@@ -72,4 +75,4 @@ def test_upgrade_database_stamps_unversioned_current_schema_at_head(tmp_path):
     _upgrade_database(engine, database_url)
 
     with engine.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0002"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0003"

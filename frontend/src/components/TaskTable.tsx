@@ -34,6 +34,7 @@ export function TaskTable({ tasks }: TaskTableProps) {
           <TableHead>ACU</TableHead>
           <TableHead>Created</TableHead>
           <TableHead>Updated</TableHead>
+          <TableHead>Merged At</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -111,6 +112,9 @@ export function TaskTable({ tasks }: TaskTableProps) {
               </TableCell>
               <TableCell className="text-xs text-muted-foreground">
                 {formatDateTime(task.updated_at)}
+              </TableCell>
+              <TableCell className="text-xs text-muted-foreground">
+                {task.merged_at ? formatDateTime(task.merged_at) : "—"}
               </TableCell>
             </TableRow>
           )

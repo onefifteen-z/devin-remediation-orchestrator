@@ -20,7 +20,7 @@ def _ensure_data_dir(database_url: str) -> None:
 _engine = None
 _SessionLocal = None
 
-LATEST_AUDIT_COLUMNS = {
+PHASE_2B_AUDIT_COLUMNS = {
     "pr_state",
     "devin_status",
     "devin_status_detail",
@@ -28,6 +28,8 @@ LATEST_AUDIT_COLUMNS = {
     "devin_service_user_id",
     "devin_tags",
 }
+
+PHASE_2C_COLUMNS = {"merge_notification_sent"}
 
 
 def get_engine():
@@ -75,12 +77,21 @@ def _upgrade_database(engine, database_url: str) -> None:
                 constraint["name"]
                 for constraint in inspector.get_unique_constraints("remediation_tasks")
             }
-            baseline = (
-                "0002"
-                if LATEST_AUDIT_COLUMNS.issubset(columns)
+            has_webhook_deliveries = inspector.has_table("github_webhook_deliveries")
+            has_phase_2b = (
+                PHASE_2B_AUDIT_COLUMNS.issubset(columns)
                 and "uq_repo_issue" in unique_constraints
-                else "0001"
             )
+            if (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+            ):
+                baseline = "0003"
+            elif has_phase_2b:
+                baseline = "0002"
+            else:
+                baseline = "0001"
             command.stamp(alembic_cfg, baseline)
 
         command.upgrade(alembic_cfg, "head")

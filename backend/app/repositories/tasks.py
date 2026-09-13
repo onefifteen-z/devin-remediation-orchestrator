@@ -77,6 +77,21 @@ class TaskRepository:
         )
         return self.db.scalars(stmt).first()
 
+    def get_by_pr_url(self, pr_url: str) -> RemediationTask | None:
+        stmt = select(RemediationTask).where(RemediationTask.pr_url == pr_url)
+        return self.db.scalars(stmt).first()
+
+    def get_by_repository_and_pr_number(
+        self, repository: str, pr_number: int
+    ) -> RemediationTask | None:
+        suffix = f"/pull/{pr_number}"
+        stmt = select(RemediationTask).where(
+            RemediationTask.github_repository == repository,
+            RemediationTask.pr_url.isnot(None),
+            RemediationTask.pr_url.endswith(suffix),
+        )
+        return self.db.scalars(stmt).first()
+
     def list_tasks(self, limit: int = 100, offset: int = 0) -> tuple[list[RemediationTask], int]:
         total = self.db.scalar(select(func.count()).select_from(RemediationTask)) or 0
         stmt = (

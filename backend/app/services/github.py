@@ -15,7 +15,7 @@ class GitHubAPIError(Exception):
 
 
 class GitHubClient:
-    """GitHub REST API client."""
+    """GitHub REST API client for orchestrator-initiated actions."""
 
     def __init__(self, settings: Settings, client: httpx.AsyncClient | None = None):
         self.settings = settings
@@ -47,8 +47,12 @@ class GitHubClient:
                 response.status_code,
             )
 
-    async def list_issues_by_label(self, repository: str, label: str) -> list[dict[str, Any]]:
+    def _split_repository(self, repository: str) -> tuple[str, str]:
         owner, repo = repository.split("/", 1)
+        return owner, repo
+
+    async def list_issues_by_label(self, repository: str, label: str) -> list[dict[str, Any]]:
+        owner, repo = self._split_repository(repository)
         client = await self._get_client()
         response = await client.get(
             f"/repos/{owner}/{repo}/issues",
@@ -71,19 +75,44 @@ class GitHubClient:
         ]
 
     async def get_issue(self, repository: str, issue_number: int) -> dict[str, Any]:
-        # TODO: Phase 2 — implement issue fetch
-        raise NotImplementedError("GitHub get_issue not implemented in Phase 1")
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.get(f"/repos/{owner}/{repo}/issues/{issue_number}")
+        if response.status_code >= 400:
+            self._handle_error(response)
+        return response.json()
 
     async def get_pull_request(self, repository: str, pr_number: int) -> dict[str, Any]:
-        # TODO: Phase 2 — implement PR fetch
-        raise NotImplementedError("GitHub get_pull_request not implemented in Phase 1")
-
-    async def get_check_runs(self, repository: str, ref: str) -> list[dict[str, Any]]:
-        # TODO: Phase 2 — implement CI check run inspection
-        raise NotImplementedError("GitHub get_check_runs not implemented in Phase 1")
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.get(f"/repos/{owner}/{repo}/pulls/{pr_number}")
+        if response.status_code >= 400:
+            self._handle_error(response)
+        return response.json()
 
     async def create_issue_comment(
         self, repository: str, issue_number: int, body: str
     ) -> dict[str, Any]:
-        # TODO: Phase 2 — implement issue comment
-        raise NotImplementedError("GitHub create_issue_comment not implemented in Phase 1")
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.post(
+            f"/repos/{owner}/{repo}/issues/{issue_number}/comments",
+            json={"body": body},
+        )
+        if response.status_code >= 400:
+            self._handle_error(response)
+        return response.json()
+
+    async def close_issue(self, repository: str, issue_number: int) -> dict[str, Any]:
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.patch(
+            f"/repos/{owner}/{repo}/issues/{issue_number}",
+            json={"state": "closed"},
+        )
+        if response.status_code >= 400:
+            self._handle_error(response)
+        return response.json()
+
+    async def get_check_runs(self, repository: str, ref: str) -> list[dict[str, Any]]:
+        raise NotImplementedError("GitHub get_check_runs is planned for Phase 3")
