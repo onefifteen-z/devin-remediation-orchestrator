@@ -160,7 +160,8 @@ without deleting its existing data.
 | `DEVIN_REMEDIATION_PLAYBOOK_ID` | Optional Devin playbook ID for remediation sessions |
 | `DEVIN_SCHEDULED_ENABLED` | Enable native Devin schedule registration (`false` by default) |
 | `DEVIN_SCHEDULE_CRON` | Cron expression for scheduled intake (default: `0 9 * * 1-5`) |
-| `DEVIN_SCHEDULE_ID` | Existing schedule ID for idempotent updates (optional) |
+| `DEVIN_AUTOMATION_ID` | Existing automation ID (`auto-...` from Devin API) for idempotent updates (optional; auto-discovered via metadata when unset) |
+| `DEVIN_SCHEDULE_ID` | Legacy schedules API ID (deprecated; use `DEVIN_AUTOMATION_ID` instead) |
 | `ORCHESTRATOR_PUBLIC_URL` | Public URL for scheduled intake callback (required when scheduling enabled) |
 | `SCHEDULED_INTAKE_TOKEN` | Optional bearer token for `POST /api/scheduled/intake` |
 | `CORS_ORIGINS` | Comma-separated origins |
@@ -506,7 +507,7 @@ All metrics are computed from real database state—empty when no tasks exist. M
 - Session consumption API integration (`GET /organizations/{org_id}/consumption/daily/sessions/{session_id}`)
 - ACU source semantics (`acu_source`, `acu_verified`) with final consumption sync on terminal session / merge
 - Organization analytics (`GET /organizations/{org_id}/consumption/daily`) exposed via metrics API
-- Scheduled Devin intake via native Schedules API (`DEVIN_SCHEDULED_ENABLED=false` by default)
+- Scheduled Devin intake via native Automations API (`schedule:recurring` trigger; `DEVIN_SCHEDULED_ENABLED=false` by default)
 - Dashboard expandable structured result rows and verified ACU display
 
 ### Advanced Devin Integration
@@ -548,7 +549,7 @@ Local DB remains authoritative for merge rate and MTTR. Devin org consumption su
 
 #### Scheduled Devin
 
-When `DEVIN_SCHEDULED_ENABLED=true` and `DEVIN_LIVE_ENABLED=true`, the orchestrator registers a native Devin schedule whose session calls `POST /api/scheduled/intake` to scan issues labeled `devin-scheduled` (configurable via `SCHEDULED_LABEL`) using the same idempotent orchestration path. Webhook and manual scan continue to use `devin-remediate`.
+When `DEVIN_SCHEDULED_ENABLED=true` and `DEVIN_LIVE_ENABLED=true`, the orchestrator registers a native Devin automation with a `schedule:recurring` trigger. Each run starts a Devin session that calls `POST /api/scheduled/intake` to scan issues labeled `devin-scheduled` (configurable via `SCHEDULED_LABEL`) using the same idempotent orchestration path. Webhook and manual scan continue to use `devin-remediate`.
 
 Required configuration:
 
@@ -557,7 +558,7 @@ DEVIN_SCHEDULED_ENABLED=false
 DEVIN_SCHEDULE_CRON=0 9 * * 1-5
 ORCHESTRATOR_PUBLIC_URL=https://your-orchestrator.example.com
 SCHEDULED_INTAKE_TOKEN=optional-bearer-token
-DEVIN_SCHEDULE_ID=optional-existing-schedule-id
+DEVIN_AUTOMATION_ID=auto-optional-existing-automation-id
 ```
 
 #### Required Devin Permissions

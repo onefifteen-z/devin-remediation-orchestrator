@@ -40,15 +40,18 @@ async def test_configured_schedule_payload_is_correct():
         devin_schedule_cron="0 9 * * 1-5",
         devin_remediation_playbook_id="playbook-001",
     )
-    route = respx.post("https://api.devin.ai/v3/organizations/org-test/schedules").mock(
+    respx.get(
+        "https://api.devin.ai/v3/organizations/org-test/automations",
+        params={"metadata.workflow": "scheduled-intake"},
+    ).mock(
+        return_value=httpx.Response(200, json={"items": []}),
+    )
+    route = respx.post("https://api.devin.ai/v3/organizations/org-test/automations").mock(
         return_value=httpx.Response(
-            200,
+            201,
             json={
-                "schedule_id": "sched-001",
-                "title": "Remediation intake triage",
-                "prompt": "test",
-                "schedule_type": "recurring",
-                "frequency": "0 9 * * 1-5",
+                "automation_id": "auto-001",
+                "name": "Remediation intake triage",
                 "enabled": True,
             },
         )
@@ -56,13 +59,15 @@ async def test_configured_schedule_payload_is_correct():
     from app.services.devin import DevinClient
 
     service = ScheduledRemediationService(settings, DevinClient(settings))
-    schedule_id = await service.ensure_schedule()
+    automation_id = await service.ensure_schedule()
     await service.devin_client.close()
-    assert schedule_id == "sched-001"
+    assert automation_id == "auto-001"
     body = route.calls.last.request.content.decode()
-    assert "recurring" in body
-    assert "0 9 * * 1-5" in body
-    assert "playbook-001" in body
+    assert '"name"' in body
+    assert '"title"' not in body
+    assert "schedule:recurring" in body
+    assert "FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;BYHOUR=9;BYMINUTE=0" in body
+    assert "@playbook:playbook-001" in body
 
 
 @pytest.mark.asyncio
@@ -81,6 +86,7 @@ async def test_no_live_schedule_created_in_tests(monkeypatch):
 async def test_scheduled_intake_skips_duplicate_issue(client, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_SCAN_REPOSITORIES", "owner/superset")
+    monkeypatch.setenv("SCHEDULED_INTAKE_TOKEN", "")
     get_settings.cache_clear()
 
     with patch(
@@ -99,6 +105,7 @@ async def test_scheduled_intake_skips_duplicate_issue(client, monkeypatch):
 async def test_scheduled_intake_uses_same_orchestration_primitives(client, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_SCAN_REPOSITORIES", "owner/superset")
+    monkeypatch.setenv("SCHEDULED_INTAKE_TOKEN", "")
     get_settings.cache_clear()
 
     with patch(
@@ -195,16 +202,19 @@ async def test_schedule_api_error_handled_safely():
         orchestrator_public_url="https://orchestrator.example.com",
     )
 
-    class FailingScheduleClient:
-        async def create_schedule(self, body):
+    class FailingAutomationClient:
+        async def find_scheduled_intake_automation(self):
+            return None
+
+        async def create_automation(self, body):
             from app.services.devin import DevinAPIError
 
             raise DevinAPIError("Devin API error: 500", status_code=500)
 
-        async def update_schedule(self, schedule_id, body):
+        async def update_automation(self, automation_id, body):
             from app.services.devin import DevinAPIError
 
             raise DevinAPIError("Devin API error: 500", status_code=500)
 
-    service = ScheduledRemediationService(settings, FailingScheduleClient())
+    service = ScheduledRemediationService(settings, FailingAutomationClient())
     assert await service.ensure_schedule() is None

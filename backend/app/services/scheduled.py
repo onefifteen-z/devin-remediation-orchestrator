@@ -2,11 +2,12 @@ import logging
 from datetime import UTC, datetime
 
 from app.config import Settings
+from app.schemas.devin_automation import build_scheduled_intake_automation_body
 from app.services.devin import DevinAPIError, DevinClient
 
 logger = logging.getLogger(__name__)
 
-SCHEDULE_TITLE = "Remediation intake triage"
+SCHEDULE_NAME = "Remediation intake triage"
 
 
 def build_schedule_prompt(settings: Settings) -> str:
@@ -29,10 +30,30 @@ Do not modify repository code. Report a concise triage summary via structured ou
 """
 
 
+def build_automation_body(settings: Settings, *, include_playbook: bool = True) -> dict:
+    playbook_id = settings.devin_remediation_playbook_id or None
+    if not include_playbook:
+        playbook_id = None
+    return build_scheduled_intake_automation_body(
+        name=SCHEDULE_NAME,
+        prompt=build_schedule_prompt(settings),
+        cron=settings.devin_schedule_cron,
+        playbook_id=playbook_id,
+        enabled=True,
+    )
+
+
 class ScheduledRemediationService:
     def __init__(self, settings: Settings, devin_client: DevinClient):
         self.settings = settings
         self.devin_client = devin_client
+
+    async def _resolve_automation_id(self) -> str | None:
+        if self.settings.devin_automation_id:
+            return self.settings.devin_automation_id
+
+        existing = await self.devin_client.find_scheduled_intake_automation()
+        return existing.automation_id if existing else None
 
     async def ensure_schedule(self) -> str | None:
         if not self.settings.devin_scheduled_enabled:
@@ -45,38 +66,53 @@ class ScheduledRemediationService:
             )
             return None
 
-        body = {
-            "title": SCHEDULE_TITLE,
-            "prompt": build_schedule_prompt(self.settings),
-            "schedule_type": "recurring",
-            "frequency": self.settings.devin_schedule_cron,
-            "tags": ["workflow=scheduled-intake", "environment=take-home"],
-            "enabled": True,
-        }
-        if self.settings.devin_remediation_playbook_id:
-            body["playbook_id"] = self.settings.devin_remediation_playbook_id
-
         try:
-            if self.settings.devin_schedule_id:
-                schedule = await self.devin_client.update_schedule(
-                    self.settings.devin_schedule_id,
-                    body,
-                )
-            else:
-                schedule = await self.devin_client.create_schedule(body)
+            automation_id = await self._resolve_automation_id()
+            automation = await self._save_automation(automation_id)
         except DevinAPIError as exc:
             logger.warning(
-                "Failed to ensure Devin schedule",
+                "Failed to ensure Devin scheduled automation",
                 extra={"error": str(exc), "status_code": exc.status_code},
             )
             return None
 
         logger.info(
-            "Devin schedule ensured",
+            "Devin scheduled automation ensured",
             extra={
-                "schedule_id": schedule.schedule_id,
-                "frequency": schedule.frequency,
+                "automation_id": automation.automation_id,
+                "name": automation.name,
+                "cron": self.settings.devin_schedule_cron,
                 "run_time": datetime.now(UTC).isoformat(),
             },
         )
-        return schedule.schedule_id
+        if not self.settings.devin_automation_id:
+            logger.info(
+                "Set DEVIN_AUTOMATION_ID=%s to pin this automation for idempotent updates",
+                automation.automation_id,
+            )
+        return automation.automation_id
+
+    async def _save_automation(self, automation_id: str | None):
+        bodies = [build_automation_body(self.settings)]
+        if self.settings.devin_remediation_playbook_id:
+            bodies.append(build_automation_body(self.settings, include_playbook=False))
+
+        last_error: DevinAPIError | None = None
+        for index, body in enumerate(bodies):
+            try:
+                if automation_id:
+                    return await self.devin_client.update_automation(automation_id, body)
+                return await self.devin_client.create_automation(body)
+            except DevinAPIError as exc:
+                last_error = exc
+                if index == 0 and "unknown playbook" in str(exc).lower():
+                    logger.warning(
+                        "Devin rejected configured playbook for scheduled automation; retrying without playbook",
+                        extra={"playbook_id": self.settings.devin_remediation_playbook_id},
+                    )
+                    continue
+                raise
+
+        if last_error:
+            raise last_error
+        raise DevinAPIError("Failed to save scheduled automation")

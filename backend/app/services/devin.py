@@ -6,6 +6,12 @@ import httpx
 
 from app.config import Settings
 from app.schemas.devin_consumption import ConsumptionResponse, parse_consumption_response
+from app.schemas.devin_automation import (
+    AUTOMATION_METADATA_WORKFLOW,
+    AutomationResponse,
+    parse_automation_list_response,
+    parse_automation_response,
+)
 from app.schemas.devin_schedule import ScheduleResponse, parse_schedule_response
 from app.schemas.devin_session import DevinSessionResponse, parse_devin_session_response
 
@@ -62,18 +68,29 @@ class DevinClient:
     def _org_path(self, suffix: str) -> str:
         return f"/organizations/{self.settings.devin_org_id}{suffix}"
 
+    def _error_message(self, response: httpx.Response) -> str:
+        detail: str | None = None
+        try:
+            payload = response.json()
+            if isinstance(payload, dict):
+                detail = payload.get("detail") or payload.get("title")
+        except ValueError:
+            detail = response.text[:500] if response.text else None
+        message = f"Devin API error: {response.status_code}"
+        if detail:
+            message = f"{message} — {detail}"
+        return message
+
     def _handle_error(self, response: httpx.Response) -> None:
+        message = self._error_message(response)
         if response.status_code == 401:
-            raise DevinAuthError("Invalid or expired Devin API key", response.status_code)
+            raise DevinAuthError(message, response.status_code)
         if response.status_code == 403:
-            raise DevinAuthError("Devin service user lacks required permission", response.status_code)
+            raise DevinAuthError(message, response.status_code)
         if response.status_code == 429:
-            raise DevinRateLimitError("Devin API rate limit exceeded", response.status_code)
+            raise DevinRateLimitError(message, response.status_code)
         if response.status_code >= 400:
-            raise DevinAPIError(
-                f"Devin API error: {response.status_code}",
-                response.status_code,
-            )
+            raise DevinAPIError(message, response.status_code)
 
     def _parse_session(self, data: dict[str, Any]) -> DevinSessionResult:
         return DevinSessionResult(
@@ -230,5 +247,48 @@ class DevinClient:
         )
         try:
             return parse_schedule_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def list_automations(
+        self,
+        *,
+        metadata: dict[str, str] | None = None,
+    ) -> list[AutomationResponse]:
+        params: dict[str, str] = {}
+        if metadata:
+            for key, value in metadata.items():
+                params[f"metadata.{key}"] = value
+        data = await self._request_json("GET", self._org_path("/automations"), params=params or None)
+        try:
+            return parse_automation_list_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def find_scheduled_intake_automation(self) -> AutomationResponse | None:
+        automations = await self.list_automations(
+            metadata={"workflow": AUTOMATION_METADATA_WORKFLOW},
+        )
+        return automations[0] if automations else None
+
+    async def create_automation(self, body: dict[str, Any]) -> AutomationResponse:
+        data = await self._request_json("POST", self._org_path("/automations"), json=body)
+        try:
+            return parse_automation_response(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def update_automation(
+        self,
+        automation_id: str,
+        body: dict[str, Any],
+    ) -> AutomationResponse:
+        data = await self._request_json(
+            "PATCH",
+            self._org_path(f"/automations/{automation_id}"),
+            json=body,
+        )
+        try:
+            return parse_automation_response(data)
         except ValueError:
             raise DevinAPIError("Malformed Devin API response") from None

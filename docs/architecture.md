@@ -129,7 +129,7 @@ Verified V3 endpoints (see [Devin API docs](https://docs.devin.ai/api-reference/
 - `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — same-session CI repair (Phase 3)
 - `GET /v3/organizations/{org_id}/consumption/daily/sessions/{session_id}` — session ACU consumption
 - `GET /v3/organizations/{org_id}/consumption/daily` — org analytics
-- `POST /v3/organizations/{org_id}/schedules` — scheduled intake (opt-in)
+- `POST /v3/organizations/{org_id}/automations` — scheduled intake automation (`schedule:recurring` trigger; opt-in)
 
 Live calls gated by `DEVIN_LIVE_ENABLED=false` by default. Scheduled Devin gated by `DEVIN_SCHEDULED_ENABLED=false`.
 

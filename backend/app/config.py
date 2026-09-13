@@ -40,6 +40,7 @@ class Settings(BaseSettings):
 
     devin_scheduled_enabled: bool = False
     devin_schedule_cron: str = "0 9 * * 1-5"
+    devin_automation_id: str = ""
     devin_schedule_id: str = ""
     orchestrator_public_url: str = ""
     scheduled_intake_token: str = ""
