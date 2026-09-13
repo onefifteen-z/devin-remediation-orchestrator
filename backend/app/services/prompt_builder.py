@@ -1,7 +1,55 @@
-from app.models.task import RemediationTask
+from app.config import Settings
+from app.models.task import RemediationTask, TriggerSource
 
 
-def build_remediation_prompt(task: RemediationTask) -> str:
+def _trigger_source_tag(task: RemediationTask) -> str:
+    source_map = {
+        TriggerSource.GITHUB_WEBHOOK.value: "github",
+        TriggerSource.MANUAL_API.value: "api",
+        TriggerSource.SCAN.value: "scan",
+        TriggerSource.SCHEDULED.value: "scheduled",
+    }
+    return source_map.get(task.trigger_source or "", "unknown")
+
+
+def build_session_tags(task: RemediationTask) -> list[str]:
+    return [
+        "workflow=issue-remediation",
+        f"source={_trigger_source_tag(task)}",
+        f"repo={task.github_repository}",
+        f"issue={task.github_issue_number}",
+        f"issue-type={task.issue_type}",
+        "environment=take-home",
+    ]
+
+
+def build_remediation_prompt(task: RemediationTask, settings: Settings | None = None) -> str:
+    issue_body_section = ""
+    if task.issue_title and task.issue_title != f"Issue #{task.github_issue_number}":
+        pass
+    constraints = """Orchestration constraints:
+- Update an existing pull request if one already exists for this issue.
+- Do not merge pull requests.
+- Return structured output with your engineering result."""
+
+    if settings and settings.devin_remediation_playbook_id:
+        return f"""Remediate the following engineering issue using the configured remediation playbook.
+
+Repository:
+{task.github_repository}
+
+Issue:
+{task.github_issue_url}
+
+Title:
+{task.issue_title}
+
+Issue type:
+{task.issue_type}
+
+{constraints}
+"""
+
     return f"""You are responsible for remediating the following engineering issue.
 
 Repository:
@@ -12,6 +60,9 @@ Issue:
 
 Title:
 {task.issue_title}
+
+Issue type:
+{task.issue_type}
 
 Objectives:
 
@@ -33,15 +84,6 @@ Work autonomously.
 Do not stop after analysis unless blocked.
 
 If blocked, clearly report the blocker rather than guessing.
+
+{constraints}
 """
-
-
-def build_session_tags(task: RemediationTask) -> list[str]:
-    return [
-        "source=github",
-        "workflow=issue-remediation",
-        f"repo={task.github_repository}",
-        f"issue={task.github_issue_number}",
-        f"issue-type={task.issue_type}",
-        "environment=take-home",
-    ]

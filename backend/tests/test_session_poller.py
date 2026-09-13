@@ -162,7 +162,7 @@ async def test_poll_once_idempotent_status(db_session, poll_settings):
 async def test_apply_session_update_persists_acu(db_session):
     task = _make_task(db_session, TaskStatus.RUNNING)
     orchestrator = RemediationOrchestrator(db_session, Settings(), devin_client=FakeDevinClient())
-    updated = orchestrator.apply_session_update(
+    updated = await orchestrator.apply_session_update(
         task,
         DevinSessionResponse(
             session_id=task.devin_session_id,

@@ -44,6 +44,10 @@ async def test_scan_creates_only_new_issues(db_session, scan_settings):
     assert result.created == 2
     assert result.skipped == 0
     assert len(result.created_task_ids) == 2
+    mock_github.list_issues_by_label.assert_awaited_with(
+        "owner/superset",
+        "devin-remediate",
+    )
 
 
 @pytest.mark.asyncio

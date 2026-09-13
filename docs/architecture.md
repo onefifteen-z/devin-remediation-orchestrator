@@ -120,15 +120,48 @@ Devin PR state from session polling is superseded by GitHub webhook data for `pr
 
 ## Devin Integration Boundary
 
-All Devin HTTP logic lives in `backend/app/services/devin.py`.
+All Devin HTTP logic lives in `backend/app/services/devin.py`. Consumption and analytics are isolated in `devin_consumption.py` and `devin_analytics.py`.
 
 Verified V3 endpoints (see [Devin API docs](https://docs.devin.ai/api-reference/v3/usage-examples)):
 
-- `POST /v3/organizations/{org_id}/sessions` — create session
+- `POST /v3/organizations/{org_id}/sessions` — create session (with `structured_output_schema`, `playbook_id`, `tags`)
 - `GET /v3/organizations/{org_id}/sessions/{devin_id}` — get session
 - `POST /v3/organizations/{org_id}/sessions/{devin_id}/messages` — same-session CI repair (Phase 3)
+- `GET /v3/organizations/{org_id}/consumption/daily/sessions/{session_id}` — session ACU consumption
+- `GET /v3/organizations/{org_id}/consumption/daily` — org analytics
+- `POST /v3/organizations/{org_id}/automations` — scheduled intake automation (`schedule:recurring` trigger; opt-in)
 
-Live calls gated by `DEVIN_LIVE_ENABLED=false` by default.
+Live calls gated by `DEVIN_LIVE_ENABLED=false` by default. Scheduled Devin gated by `DEVIN_SCHEDULED_ENABLED=false`.
+
+### Phase 5: Playbook + Structured Output + Consumption
+
+```mermaid
+flowchart TB
+  Issue[GitHub Issue] --> ORCH[Orchestrator]
+  ORCH --> Playbook[Playbook + issue context]
+  Playbook --> Devin[Devin Session]
+  Devin --> Structured[Structured Output]
+  Devin --> Tags[Tags]
+  Devin --> SessionLife[Session lifecycle]
+  Devin --> Consumption[Consumption API]
+  Devin --> PR[GitHub PR / CI]
+  PR --> TaskLife[Task lifecycle / metrics]
+```
+
+Structured output informs failure/escalation reasons but does not set `MERGED`. Final ACU sync runs on terminal Devin status and after merge.
+
+### Scheduled Devin Intake
+
+```mermaid
+flowchart TB
+  SchedAPI[Devin Schedules API] --> DevinSession[Scheduled Devin Session]
+  DevinSession -->|POST /api/scheduled/intake| Intake[Orchestrator Intake]
+  Intake --> Scan["scan_labeled_issues (devin-scheduled)"]
+  Scan --> Dedup[repo + issue dedup]
+  Dedup --> Process[process_task]
+```
+
+Scheduled intake scans issues labeled `devin-scheduled` (`SCHEDULED_LABEL`). Webhook and manual scan use `devin-remediate` (`REMEDIATE_LABEL`). Same idempotency rules apply across all paths.
 
 ## GitHub Integration Boundary
 
@@ -190,6 +223,7 @@ flowchart LR
     WH[GitHubWebhook]
     API[ManualAPI]
     SCAN[ManualScan]
+    SCHED[ScheduledIntake]
   end
 
   subgraph dedup [Deduplication]
@@ -203,6 +237,7 @@ flowchart LR
   WH --> D1 --> ORCH
   API --> D2 --> ORCH
   SCAN --> D2 --> ORCH
+  SCHED --> D2 --> ORCH
   ORCH --> DB
 ```
 
@@ -253,7 +288,9 @@ Repair success is **not** inferred from `send_message` ACK — only from subsequ
 | CI Failure Breakdown | Counts by `failure_type` |
 | CI Repair Attempts | Sum of `ci_repair_attempts` |
 | CI Repair Successes | Tasks with `ci_repair_verified_at` set |
-| Total ACU | Sum of `acu_used` across tasks |
+| Total ACU | Sum of `acu_used` across tasks (all reported values) |
+| Verified ACU | Sum of `acu_used` where `acu_verified=true` |
+| Devin Org ACU | From Devin analytics API when available |
 | Active Sessions | Tasks in `SESSION_CREATED`, `RUNNING`, `PR_OPENED`, `CI_FAILED` |
 
 ## Failure Handling
@@ -273,4 +310,4 @@ Repair success is **not** inferred from `send_message` ACK — only from subsequ
 - Multi-repository rollout
 - Policy-based approval gates
 - Slack notifications
-- Scheduled remediation jobs
+- Additional schedule types beyond intake triage

@@ -111,7 +111,7 @@ export function Dashboard() {
           </Alert>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
           <MetricCard
             title="Active Tasks"
             value={metrics ? String(metrics.active_tasks) : "—"}
@@ -125,7 +125,7 @@ export function Dashboard() {
           <MetricCard
             title="Merge Rate"
             value={metrics ? formatPercent(metrics.merge_rate) : "—"}
-            description="Requires verified GitHub merge"
+            description="Production remediations merged / production tasks (excludes smoke tests)"
             loading={isLoading}
           />
           <MetricCard
@@ -136,6 +136,17 @@ export function Dashboard() {
           <MetricCard
             title="Total ACU"
             value={metrics ? metrics.total_acu.toFixed(1) : "—"}
+            description="All reported session values (may include unverified 0.0)"
+            loading={isLoading}
+          />
+          <MetricCard
+            title="Verified ACU"
+            value={metrics ? metrics.verified_total_acu.toFixed(1) : "—"}
+            description={
+              metrics?.consumption_api_available === false
+                ? "Consumption API unavailable"
+                : "Sum of consumption-verified task ACU"
+            }
             loading={isLoading}
           />
         </section>

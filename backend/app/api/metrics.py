@@ -9,5 +9,5 @@ router = APIRouter(prefix="/api/metrics", tags=["metrics"])
 
 
 @router.get("", response_model=MetricsResponse)
-def get_metrics(db: Session = Depends(get_db)) -> MetricsResponse:
-    return MetricsService(db).compute()
+async def get_metrics(db: Session = Depends(get_db)) -> MetricsResponse:
+    return await MetricsService(db).compute_with_analytics()

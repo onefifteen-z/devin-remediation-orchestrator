@@ -2,10 +2,15 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.models.task import ACTIVE_STATUSES, TERMINAL_STATUSES, RemediationTask, TaskStatus
 from app.repositories.tasks import TaskRepository
 from app.schemas.ci import FailureType
+from app.schemas.devin_consumption import ConsumptionResponse
 from app.schemas.metrics import MetricsResponse, ThroughputPoint
+from app.services.devin import DevinClient
+from app.services.devin_analytics import DevinAnalyticsService
+from app.services.task_classification import is_production_remediation
 
 
 class MetricsService:
@@ -18,15 +23,28 @@ class MetricsService:
             return MetricsResponse()
 
         total = len(tasks)
+        production_tasks = [task for task in tasks if is_production_remediation(task)]
         active = sum(1 for t in tasks if t.status in ACTIVE_STATUSES)
         merged = [t for t in tasks if t.status == TaskStatus.MERGED]
+        merged_production = [
+            t for t in production_tasks if t.status == TaskStatus.MERGED
+        ]
         failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
         escalated = sum(1 for t in tasks if t.status == TaskStatus.ESCALATED)
         tasks_with_prs = sum(1 for t in tasks if t.pr_url is not None)
         terminal = [t for t in tasks if t.status in TERMINAL_STATUSES]
+        production_terminal = [
+            t for t in production_tasks if t.status in TERMINAL_STATUSES
+        ]
 
-        success_rate = len(merged) / len(terminal) if terminal else 0.0
-        merge_rate = len(merged) / total if total else 0.0
+        success_rate = (
+            len(merged_production) / len(production_terminal)
+            if production_terminal
+            else 0.0
+        )
+        merge_rate = (
+            len(merged_production) / len(production_tasks) if production_tasks else 0.0
+        )
 
         mttr_values = []
         for task in merged:
@@ -47,6 +65,17 @@ class MetricsService:
         total_acu = sum(acu_values)
         average_acu = total_acu / len(acu_values) if acu_values else 0.0
 
+        verified_values = [
+            t.acu_used for t in tasks if t.acu_verified and t.acu_used is not None
+        ]
+        verified_total_acu = sum(verified_values)
+        average_verified_acu = (
+            verified_total_acu / len(verified_values) if verified_values else 0.0
+        )
+
+        consumption_api_available = None
+        devin_org_total_acus = None
+
         return MetricsResponse(
             total_tasks=total,
             active_tasks=active,
@@ -65,10 +94,32 @@ class MetricsService:
             ci_repair_successes=ci_metrics["ci_repair_successes"],
             total_acu=round(total_acu, 2),
             average_acu_per_task=round(average_acu, 2),
+            verified_total_acu=round(verified_total_acu, 2),
+            average_verified_acu_per_task=round(average_verified_acu, 2),
+            consumption_api_available=consumption_api_available,
+            devin_org_total_acus=devin_org_total_acus,
             tasks_with_prs=tasks_with_prs,
             failed_tasks=failed,
             escalated_tasks=escalated,
         )
+
+    async def compute_with_analytics(self) -> MetricsResponse:
+        metrics = self.compute()
+        settings = get_settings()
+        if not settings.devin_api_key or not settings.devin_org_id:
+            return metrics
+
+        client = DevinClient(settings)
+        analytics = DevinAnalyticsService(client)
+        try:
+            seven_days_ago = int((datetime.now(UTC) - timedelta(days=7)).timestamp())
+            result = await analytics.get_org_consumption_window(time_after=seven_days_ago)
+            metrics.consumption_api_available = analytics.consumption_api_available
+            if isinstance(result, ConsumptionResponse):
+                metrics.devin_org_total_acus = round(result.total_acus, 2)
+        finally:
+            await client.close()
+        return metrics
 
 
 def _compute_ci_metrics(tasks: list[RemediationTask]) -> dict:

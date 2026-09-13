@@ -6,10 +6,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import health, metrics, remediations, scan, tasks, webhooks
+from app.api import health, metrics, remediations, scan, scheduled, tasks, webhooks
 from app.config import get_settings
 from app.database import get_session_factory, init_db
 from app.services.devin import DevinClient
+from app.services.scheduled import ScheduledRemediationService
 from app.workers.poller import SessionPoller
 
 settings = get_settings()
@@ -29,6 +30,10 @@ async def lifespan(_app: FastAPI):
     devin_client = DevinClient(settings)
     poller = SessionPoller(settings, get_session_factory(), devin_client)
     poller_task = poller.start_background()
+
+    if settings.devin_scheduled_enabled and settings.devin_live_enabled:
+        schedule_service = ScheduledRemediationService(settings, devin_client)
+        await schedule_service.ensure_schedule()
 
     yield
 
@@ -62,6 +67,7 @@ app.include_router(tasks.router)
 app.include_router(metrics.router)
 app.include_router(remediations.router)
 app.include_router(scan.router)
+app.include_router(scheduled.router)
 app.include_router(webhooks.router)
 
 

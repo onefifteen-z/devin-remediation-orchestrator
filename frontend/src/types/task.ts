@@ -9,6 +9,18 @@ export type TaskStatus =
   | "FAILED"
   | "ESCALATED"
 
+export interface TestPerformed {
+  command: string
+  result: "passed" | "failed" | "skipped" | "not_run"
+}
+
+export interface StructuredResultPayload {
+  tests_performed?: TestPerformed[]
+  residual_risks?: string[]
+  pr_url?: string | null
+  raw?: Record<string, unknown>
+}
+
 export interface Task {
   id: number
   github_delivery_id: string
@@ -17,6 +29,7 @@ export interface Task {
   github_issue_url: string
   issue_title: string
   issue_type: string
+  trigger_source: string | null
   devin_session_id: string | null
   devin_session_url: string | null
   devin_status: string | null
@@ -47,6 +60,14 @@ export interface Task {
   ci_repair_verified_at: string | null
   ci_non_code_failure_count: number
   acu_used: number | null
+  acu_source: string | null
+  acu_verified: boolean
+  remediation_outcome: string | null
+  root_cause: string | null
+  implementation_summary: string | null
+  structured_result_json: string | null
+  blocker: string | null
+  playbook_id: string | null
   created_at: string
   updated_at: string
   mttr_seconds: number | null

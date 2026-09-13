@@ -19,10 +19,16 @@ from app.repositories.webhook_deliveries import WebhookDeliveryRepository
 from app.schemas.github_events import PullRequestEvent, extract_issue_type
 from app.services.github import GitHubClient
 from app.services.github_events import find_task_for_pr
+from app.schemas.devin_consumption import ConsumptionResponse
+from app.schemas.remediation_result import REMEDIATION_OUTPUT_JSON_SCHEMA
+from app.services.devin_consumption import DevinConsumptionService
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
+from app.services.task_classification import trigger_source_from_event_source
 from app.services.session_lifecycle import (
     extract_devin_audit_fields,
     extract_primary_pull_request,
+    extract_structured_result_fields,
+    is_terminal_devin_status,
     is_valid_status_transition,
     map_devin_session_to_task_status,
     resolve_exit_escalation_reason,
@@ -97,6 +103,7 @@ class RemediationOrchestrator:
                     github_issue_url=event.github_issue_url,
                     issue_title=event.issue_title,
                     issue_type=event.issue_type,
+                    trigger_source=trigger_source_from_event_source(event.source),
                     max_retries=self.settings.max_retries,
                 )
             )
@@ -123,18 +130,29 @@ class RemediationOrchestrator:
             task=TaskResponse.from_orm_task(refreshed),
         )
 
-    async def scan_labeled_issues(self) -> ScanResult:
+    async def scan_labeled_issues(
+        self,
+        *,
+        source: str = "scan",
+        delivery_prefix: str = "manual",
+        run_id: str | None = None,
+        label: str | None = None,
+    ) -> ScanResult:
         repositories = self.settings.github_scan_repositories_list()
-        label = self.settings.remediate_label
+        label = label or self.settings.remediate_label
         result = ScanResult()
 
         for repository in repositories:
             issues = await self.github_client.list_issues_by_label(repository, label)
             for issue in issues:
                 result.scanned += 1
+                if run_id:
+                    delivery_id = f"{delivery_prefix}:{run_id}:{repository}:{issue['number']}"
+                else:
+                    delivery_id = f"{delivery_prefix}:{repository}:{issue['number']}"
                 event = RemediationEvent(
-                    github_delivery_id=f"manual:{repository}:{issue['number']}",
-                    source="scan",
+                    github_delivery_id=delivery_id,
+                    source=source,
                     github_repository=repository,
                     github_issue_number=issue["number"],
                     github_issue_url=issue["html_url"],
@@ -201,8 +219,9 @@ class RemediationOrchestrator:
             self.repo.update_task(claimed_task, started_at=None)
             return
 
-        prompt = build_remediation_prompt(claimed_task)
+        prompt = build_remediation_prompt(claimed_task, self.settings)
         tags = build_session_tags(claimed_task)
+        playbook_id = self.settings.devin_remediation_playbook_id or None
 
         try:
             session = await self.devin_client.create_session(
@@ -210,12 +229,20 @@ class RemediationOrchestrator:
                 tags=tags,
                 repos=[claimed_task.github_repository],
                 max_acu_limit=self.settings.max_acu_per_task,
+                structured_output_schema=REMEDIATION_OUTPUT_JSON_SCHEMA,
+                structured_output_required=True,
+                playbook_id=playbook_id,
             )
+            session_fields: dict = {
+                "devin_session_id": session.session_id,
+                "devin_session_url": session.url,
+            }
+            if playbook_id:
+                session_fields["playbook_id"] = playbook_id
             session_created = self.transition(
                 claimed_task,
                 TaskStatus.SESSION_CREATED,
-                devin_session_id=session.session_id,
-                devin_session_url=session.url,
+                **session_fields,
             )
             if _is_active_devin_status(session.status):
                 self.transition(session_created, TaskStatus.RUNNING)
@@ -238,17 +265,17 @@ class RemediationOrchestrator:
             return
 
         session = await self.devin_client.get_session(task.devin_session_id)
-        self.apply_session_update(task, session)
+        await self.apply_session_update(task, session)
 
-    def apply_session_update(
+    async def apply_session_update(
         self, task: RemediationTask, session: DevinSessionResponse
     ) -> RemediationTask:
         previous_status = task.status
         pr = extract_primary_pull_request(session.pull_requests)
 
         field_updates: dict = extract_devin_audit_fields(session)
-        if session.acus_consumed is not None:
-            field_updates["acu_used"] = session.acus_consumed
+        field_updates.update(extract_structured_result_fields(session))
+        self._apply_session_detail_acu(field_updates, task, session)
         if pr is not None:
             field_updates["pr_url"] = pr[0]
             field_updates["pr_state"] = pr[1]
@@ -260,6 +287,8 @@ class RemediationOrchestrator:
         if target_status is None:
             updated = self.repo.update_task(task, **field_updates)
             self._log_session_sync(updated, previous_status, previous_status, pr)
+            if is_terminal_devin_status(session.status):
+                updated = await self.sync_final_consumption(updated.id) or updated
             return updated
 
         transition_fields = dict(field_updates)
@@ -272,7 +301,47 @@ class RemediationOrchestrator:
 
         updated = self.transition(task, target_status, **transition_fields)
         self._log_session_sync(updated, previous_status, target_status, pr)
+        if is_terminal_devin_status(session.status):
+            updated = await self.sync_final_consumption(updated.id) or updated
         return updated
+
+    def _apply_session_detail_acu(
+        self,
+        field_updates: dict,
+        task: RemediationTask,
+        session: DevinSessionResponse,
+    ) -> None:
+        if task.acu_verified:
+            return
+        if session.acus_consumed is not None:
+            field_updates["acu_used"] = session.acus_consumed
+            field_updates["acu_source"] = "session_detail"
+            field_updates["acu_verified"] = False
+
+    async def sync_final_consumption(self, task_id: int) -> RemediationTask | None:
+        task = self.repo.get_by_id(task_id)
+        if not task or not task.devin_session_id:
+            return task
+        if task.acu_verified:
+            return task
+
+        consumption_service = DevinConsumptionService(self.devin_client)
+        result = await consumption_service.get_session_consumption(task.devin_session_id)
+        if isinstance(result, ConsumptionResponse):
+            return self.repo.update_task(
+                task,
+                acu_used=result.total_acus,
+                acu_source="consumption_api",
+                acu_verified=True,
+            )
+
+        if result.status_code == 403:
+            updates: dict = {"acu_source": "unavailable"}
+            if task.acu_used is None:
+                updates["acu_verified"] = False
+            return self.repo.update_task(task, **updates)
+
+        return task
 
     def _log_session_sync(
         self,
@@ -430,6 +499,12 @@ class RemediationOrchestrator:
                 "Failed to post merge notification comment",
                 extra={"task_id": task_id, "issue_number": task.github_issue_number},
             )
+
+        refreshed = self.repo.get_by_id(task_id)
+        if refreshed is None:
+            return
+
+        await self.sync_final_consumption(task_id)
 
         refreshed = self.repo.get_by_id(task_id)
         if refreshed is None:

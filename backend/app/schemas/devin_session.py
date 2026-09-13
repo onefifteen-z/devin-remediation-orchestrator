@@ -19,6 +19,7 @@ class DevinSessionResponse(BaseModel):
     tags: list[str] = Field(default_factory=list)
     pull_requests: list[DevinPullRequest] = Field(default_factory=list)
     acus_consumed: float | None = None
+    playbook_id: str | None = None
     structured_output: dict[str, Any] | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
@@ -57,6 +58,8 @@ def parse_devin_session_response(data: dict[str, Any]) -> DevinSessionResponse:
     tags_raw = data.get("tags") or []
     tags = [str(tag) for tag in tags_raw if tag is not None] if isinstance(tags_raw, list) else []
 
+    playbook_id = data.get("playbook_id")
+
     return DevinSessionResponse(
         session_id=data["session_id"],
         url=data["url"],
@@ -67,6 +70,7 @@ def parse_devin_session_response(data: dict[str, Any]) -> DevinSessionResponse:
         tags=tags,
         pull_requests=pull_requests,
         acus_consumed=acus_consumed,
+        playbook_id=str(playbook_id) if playbook_id else None,
         structured_output=structured_output,
         created_at=data.get("created_at"),
         updated_at=data.get("updated_at"),

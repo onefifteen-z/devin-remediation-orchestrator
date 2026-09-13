@@ -140,12 +140,24 @@ class FakeDevinClient:
         self.last_repos = None
         self.last_max_acu_limit = None
 
-    async def create_session(self, prompt, tags=None, max_acu_limit=None, repos=None):
+    async def create_session(
+        self,
+        prompt,
+        tags=None,
+        max_acu_limit=None,
+        repos=None,
+        structured_output_schema=None,
+        structured_output_required=True,
+        playbook_id=None,
+    ):
         self.calls += 1
         self.last_prompt = prompt
         self.last_tags = tags
         self.last_repos = repos
         self.last_max_acu_limit = max_acu_limit
+        self.last_structured_output_schema = structured_output_schema
+        self.last_structured_output_required = structured_output_required
+        self.last_playbook_id = playbook_id
         await asyncio.sleep(0.05)
 
         if self.fail:
@@ -158,13 +170,27 @@ class FakeDevinClient:
 
         return Result()
 
+    async def get_session_consumption(self, session_id, time_after=None, time_before=None):
+        from app.schemas.devin_consumption import ConsumptionUnavailable
+
+        return ConsumptionUnavailable(reason="Not implemented in fake client", status_code=None)
+
 
 class FailingDevinClient:
     def __init__(self, message: str = "Devin API error: 500"):
         self.calls = 0
         self.message = message
 
-    async def create_session(self, prompt, tags=None, max_acu_limit=None, repos=None):
+    async def create_session(
+        self,
+        prompt,
+        tags=None,
+        max_acu_limit=None,
+        repos=None,
+        structured_output_schema=None,
+        structured_output_required=True,
+        playbook_id=None,
+    ):
         self.calls += 1
         raise DevinAPIError(self.message, status_code=500)
 
@@ -269,7 +295,7 @@ async def test_process_task_generates_correct_prompt(db_session):
 
     await orchestrator.process_task(task.id)
 
-    expected_prompt = build_remediation_prompt(task)
+    expected_prompt = build_remediation_prompt(task, _live_settings())
     assert fake_client.last_prompt == expected_prompt
     assert "Diagnose the root cause" in fake_client.last_prompt
     assert "smallest safe fix" in fake_client.last_prompt
