@@ -1,11 +1,36 @@
+import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import asc, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.task import ACTIVE_STATUSES, POLLABLE_STATUSES, RemediationTask, TaskStatus
 from app.schemas.task import TaskCreate
+from app.services.task_classification import smoke_test_sql_condition
+
+TASK_SORT_FIELDS = {
+    "created_at": RemediationTask.created_at,
+    "merged_at": RemediationTask.merged_at,
+    "status": RemediationTask.status,
+    "repository": RemediationTask.github_repository,
+    "issue_number": RemediationTask.github_issue_number,
+    "issue_title": RemediationTask.issue_title,
+    "trigger_source": RemediationTask.trigger_source,
+}
+
+
+@dataclass(frozen=True)
+class TaskListQuery:
+    limit: int = 25
+    offset: int = 0
+    include_smoke_tests: bool = False
+    status: str | None = None
+    trigger_source: str | None = None
+    search: str | None = None
+    sort_by: str = "created_at"
+    sort_order: str = "desc"
 
 
 class DuplicateDeliveryError(Exception):
@@ -43,6 +68,8 @@ class TaskRepository:
             github_issue_url=data.github_issue_url,
             issue_title=data.issue_title,
             issue_type=data.issue_type,
+            issue_labels=json.dumps(data.issue_labels) if data.issue_labels else None,
+            task_kind=data.task_kind,
             trigger_source=data.trigger_source,
             max_retries=data.max_retries,
             status=TaskStatus.RECEIVED,
@@ -93,13 +120,44 @@ class TaskRepository:
         )
         return self.db.scalars(stmt).first()
 
-    def list_tasks(self, limit: int = 100, offset: int = 0) -> tuple[list[RemediationTask], int]:
-        total = self.db.scalar(select(func.count()).select_from(RemediationTask)) or 0
+    def _apply_task_list_filters(self, query, params: TaskListQuery):
+        if not params.include_smoke_tests:
+            query = query.where(~smoke_test_sql_condition())
+        if params.status:
+            query = query.where(RemediationTask.status == TaskStatus(params.status))
+        if params.trigger_source:
+            query = query.where(RemediationTask.trigger_source == params.trigger_source)
+        if params.search:
+            term = params.search.strip()
+            if term.isdigit():
+                query = query.where(
+                    or_(
+                        RemediationTask.github_issue_number == int(term),
+                        RemediationTask.github_repository.ilike(f"%{term}%"),
+                        RemediationTask.issue_title.ilike(f"%{term}%"),
+                    )
+                )
+            else:
+                query = query.where(
+                    or_(
+                        RemediationTask.github_repository.ilike(f"%{term}%"),
+                        RemediationTask.issue_title.ilike(f"%{term}%"),
+                    )
+                )
+        return query
+
+    def list_tasks(self, params: TaskListQuery | None = None) -> tuple[list[RemediationTask], int]:
+        params = params or TaskListQuery()
+        base = select(RemediationTask)
+        filtered = self._apply_task_list_filters(base, params)
+        total = self.db.scalar(select(func.count()).select_from(filtered.subquery())) or 0
+
+        sort_column = TASK_SORT_FIELDS.get(params.sort_by, RemediationTask.created_at)
+        order_fn = desc if params.sort_order == "desc" else asc
         stmt = (
-            select(RemediationTask)
-            .order_by(RemediationTask.created_at.desc())
-            .limit(limit)
-            .offset(offset)
+            filtered.order_by(order_fn(sort_column))
+            .limit(params.limit)
+            .offset(params.offset)
         )
         items = list(self.db.scalars(stmt).all())
         return items, total

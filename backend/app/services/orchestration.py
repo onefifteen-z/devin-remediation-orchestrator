@@ -4,7 +4,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import Settings
-from app.models.task import POLLABLE_STATUSES, RemediationTask, TaskStatus
+from app.models.task import (
+    ACTIVE_STATUSES,
+    POLLABLE_STATUSES,
+    RemediationTask,
+    TaskStatus,
+    TERMINAL_STATUSES,
+)
 from app.repositories.tasks import (
     DuplicateDeliveryError,
     IssueAlreadyTrackedError,
@@ -16,17 +22,25 @@ from app.schemas.scan import ScanResult
 from app.schemas.task import RemediationEvent, TaskCreate, TaskResponse
 from app.services.devin import DevinAPIError, DevinClient
 from app.repositories.webhook_deliveries import WebhookDeliveryRepository
-from app.schemas.github_events import PullRequestEvent, extract_issue_type
+from app.schemas.github_events import (
+    PullRequestEvent,
+    extract_issue_labels,
+    extract_issue_type,
+)
 from app.services.github import GitHubClient
 from app.services.github_events import find_task_for_pr
 from app.schemas.devin_consumption import ConsumptionResponse
 from app.schemas.remediation_result import REMEDIATION_OUTPUT_JSON_SCHEMA
 from app.services.devin_consumption import DevinConsumptionService
 from app.services.prompt_builder import build_remediation_prompt, build_session_tags
-from app.services.task_classification import trigger_source_from_event_source
+from app.services.task_classification import (
+    task_kind_from_title,
+    trigger_source_from_event_source,
+)
 from app.services.session_lifecycle import (
     extract_devin_audit_fields,
     extract_primary_pull_request,
+    extract_session_insights_fields,
     extract_structured_result_fields,
     is_terminal_devin_status,
     is_valid_status_transition,
@@ -87,12 +101,62 @@ class RemediationOrchestrator:
         self.devin_client = devin_client or DevinClient(settings)
         self.github_client = github_client or GitHubClient(settings)
 
+    def _log_issue_outcome(
+        self,
+        event_name: str,
+        event: RemediationEvent,
+        task: RemediationTask,
+    ) -> None:
+        logger.info(
+            event_name,
+            extra={
+                "repository": event.github_repository,
+                "issue_number": event.github_issue_number,
+                "task_id": task.id,
+                "trigger_source": task.trigger_source,
+                "task_status": task.status.value,
+            },
+        )
+
+    def _classify_existing_issue_outcome(self, task: RemediationTask) -> str:
+        if task.status == TaskStatus.MERGED:
+            return "already_remediated"
+        if task.status in {TaskStatus.FAILED, TaskStatus.ESCALATED}:
+            return "existing_terminal"
+        if task.devin_session_id:
+            return "existing_devin_session"
+        if task.status in ACTIVE_STATUSES:
+            return "existing_active"
+        return "duplicate_issue_trigger"
+
+    def _should_process_existing_task(self, task: RemediationTask, outcome: str) -> bool:
+        if outcome == "created":
+            return True
+        if task.devin_session_id:
+            return False
+        if task.status == TaskStatus.MERGED:
+            return False
+        if task.status in {TaskStatus.FAILED, TaskStatus.ESCALATED}:
+            return False
+        if task.status == TaskStatus.RECEIVED:
+            return True
+        return False
+
     def ensure_task_for_issue(self, event: RemediationEvent) -> tuple[RemediationTask, str]:
         existing = self.repo.get_by_issue(
             event.github_repository, event.github_issue_number
         )
         if existing:
-            return existing, "skipped"
+            outcome = self._classify_existing_issue_outcome(existing)
+            event_name = {
+                "already_remediated": "already_remediated",
+                "existing_terminal": "duplicate_issue_trigger",
+                "existing_devin_session": "existing_devin_session",
+                "existing_active": "existing_active_remediation",
+                "duplicate_issue_trigger": "duplicate_issue_trigger",
+            }[outcome]
+            self._log_issue_outcome(event_name, event, existing)
+            return existing, outcome
 
         try:
             task = self.repo.create_task(
@@ -103,15 +167,24 @@ class RemediationOrchestrator:
                     github_issue_url=event.github_issue_url,
                     issue_title=event.issue_title,
                     issue_type=event.issue_type,
+                    issue_labels=event.issue_labels,
+                    task_kind=task_kind_from_title(
+                        event.issue_title, event.issue_type
+                    ),
                     trigger_source=trigger_source_from_event_source(event.source),
                     max_retries=self.settings.max_retries,
                 )
             )
             return task, "created"
         except IssueAlreadyTrackedError as exc:
-            return exc.existing_task, "skipped"
+            outcome = self._classify_existing_issue_outcome(exc.existing_task)
+            self._log_issue_outcome("duplicate_issue_trigger", event, exc.existing_task)
+            return exc.existing_task, outcome
         except DuplicateDeliveryError as exc:
-            return exc.existing_task, "skipped"
+            self._log_issue_outcome(
+                "duplicate_webhook_delivery", event, exc.existing_task
+            )
+            return exc.existing_task, "duplicate_webhook_delivery"
 
     def handle_webhook_event(self, event: RemediationEvent) -> tuple[RemediationTask, str]:
         return self.ensure_task_for_issue(event)
@@ -119,7 +192,8 @@ class RemediationOrchestrator:
     async def create_remediation(self, request: RemediationCreateRequest) -> RemediationResponse:
         event = _normalize_api_request(request)
         task, outcome = self.ensure_task_for_issue(event)
-        await self.process_task(task.id, reraise_devin_errors=True)
+        if self._should_process_existing_task(task, outcome):
+            await self.process_task(task.id, reraise_devin_errors=True)
         refreshed = self.repo.get_by_id(task.id)
         if refreshed is None:
             raise RuntimeError(f"Task {task.id} not found after processing")
@@ -158,6 +232,7 @@ class RemediationOrchestrator:
                     github_issue_url=issue["html_url"],
                     issue_title=issue["title"],
                     issue_type=extract_issue_type(issue.get("labels", []), label),
+                    issue_labels=extract_issue_labels(issue.get("labels", []), label),
                 )
                 task, status = self.ensure_task_for_issue(event)
                 if status == "created":
@@ -168,6 +243,8 @@ class RemediationOrchestrator:
                     result.skipped_issues.append(
                         _issue_key(repository, issue["number"])
                     )
+                    if self._should_process_existing_task(task, status):
+                        result.created_task_ids.append(task.id)
 
         return result
 
@@ -206,17 +283,39 @@ class RemediationOrchestrator:
             )
             return
 
-        active_count = self.repo.count_active_sessions()
-        if active_count >= self.settings.max_active_sessions:
-            logger.warning(
-                "Concurrency limit reached",
+        latest = self.repo.get_by_id(task_id)
+        if latest and latest.devin_session_id:
+            logger.info(
+                "existing_devin_session",
                 extra={
                     "task_id": task_id,
-                    "active_sessions": active_count,
-                    "max_active_sessions": self.settings.max_active_sessions,
+                    "repository": latest.github_repository,
+                    "issue_number": latest.github_issue_number,
+                    "devin_session_id": latest.devin_session_id,
+                    "trigger_source": latest.trigger_source,
                 },
             )
             self.repo.update_task(claimed_task, started_at=None)
+            return
+
+        active_count = self.repo.count_active_sessions()
+        if active_count >= self.settings.max_active_sessions:
+            logger.warning(
+                "capacity_limited",
+                extra={
+                    "task_id": task_id,
+                    "repository": claimed_task.github_repository,
+                    "issue_number": claimed_task.github_issue_number,
+                    "active_sessions": active_count,
+                    "max_active_sessions": self.settings.max_active_sessions,
+                    "trigger_source": claimed_task.trigger_source,
+                },
+            )
+            self.repo.update_task(
+                claimed_task,
+                started_at=None,
+                failure_reason="capacity_limited",
+            )
             return
 
         prompt = build_remediation_prompt(claimed_task, self.settings)
@@ -266,6 +365,116 @@ class RemediationOrchestrator:
 
         session = await self.devin_client.get_session(task.devin_session_id)
         await self.apply_session_update(task, session)
+
+    async def sync_terminal_devin_audit(self, task_id: int) -> RemediationTask | None:
+        """Refresh Devin audit fields for terminal tasks without changing workflow status."""
+        task = self.repo.get_by_id(task_id)
+        if not task or not task.devin_session_id:
+            return task
+        if task.status not in TERMINAL_STATUSES:
+            return task
+        if not self.settings.devin_live_enabled:
+            return task
+
+        try:
+            session = await self.devin_client.get_session(task.devin_session_id)
+        except DevinAPIError as exc:
+            logger.warning(
+                "terminal_devin_audit_sync_failed",
+                extra={
+                    "task_id": task_id,
+                    "devin_session_id": task.devin_session_id,
+                    "error": str(exc),
+                    "status_code": exc.status_code,
+                },
+            )
+            return task
+
+        field_updates: dict = extract_devin_audit_fields(session)
+        field_updates.update(extract_structured_result_fields(session))
+        self._apply_session_detail_acu(field_updates, task, session)
+        if session.url and session.url != task.devin_session_url:
+            field_updates["devin_session_url"] = session.url
+
+        updated = self.repo.update_task(task, **field_updates)
+        logger.info(
+            "terminal_devin_audit_synced",
+            extra={
+                "task_id": task_id,
+                "task_status": updated.status.value,
+                "devin_status": updated.devin_status,
+                "devin_status_detail": updated.devin_status_detail,
+            },
+        )
+        updated = await self.sync_final_consumption(task_id) or updated
+        return updated
+
+    async def sync_session_insights(self) -> int:
+        """Refresh Devin session insights for all tasks via the batch insights endpoint."""
+        if not self.settings.devin_live_enabled:
+            return 0
+
+        try:
+            insights = await self.devin_client.list_session_insights()
+        except DevinAPIError as exc:
+            logger.warning(
+                "session_insights_sync_failed",
+                extra={"error": str(exc), "status_code": exc.status_code},
+            )
+            return 0
+
+        by_session = {item.session_id: item for item in insights}
+        updated = 0
+        for task in self.repo.list_all():
+            if not task.devin_session_id:
+                continue
+            item = by_session.get(task.devin_session_id)
+            if item is None:
+                continue
+            self.repo.update_task(task, **extract_session_insights_fields(item))
+            updated += 1
+
+        logger.info(
+            "session_insights_synced",
+            extra={"sessions_returned": len(by_session), "tasks_updated": updated},
+        )
+        return updated
+
+    async def refresh_tasks_from_devin(self) -> dict[str, int]:
+        """Manually sync Devin session state for tasks visible on the dashboard."""
+        if not self.settings.devin_live_enabled:
+            return {"synced": 0, "skipped": 0, "errors": 0}
+
+        synced = 0
+        skipped = 0
+        errors = 0
+        for task in self.repo.list_all():
+            if not task.devin_session_id:
+                skipped += 1
+                continue
+            try:
+                if task.status in POLLABLE_STATUSES:
+                    await self.sync_task_from_devin(task.id)
+                elif task.status in TERMINAL_STATUSES:
+                    await self.sync_terminal_devin_audit(task.id)
+                else:
+                    skipped += 1
+                    continue
+                synced += 1
+            except DevinAPIError:
+                errors += 1
+                logger.warning(
+                    "refresh_task_from_devin_failed",
+                    extra={
+                        "task_id": task.id,
+                        "repository": task.github_repository,
+                        "issue_number": task.github_issue_number,
+                        "task_status": task.status.value,
+                    },
+                )
+
+        await self.sync_session_insights()
+        return {"synced": synced, "skipped": skipped, "errors": errors}
 
     async def apply_session_update(
         self, task: RemediationTask, session: DevinSessionResponse
@@ -473,9 +682,14 @@ class RemediationOrchestrator:
         return "merged"
 
     async def post_merge_github_actions(self, task_id: int) -> None:
+        await self.sync_terminal_devin_audit(task_id)
+
         task = self.repo.get_by_id(task_id)
         if not task or task.status != TaskStatus.MERGED:
             return
+
+        await self.sync_final_consumption(task_id)
+
         if not self.settings.github_token:
             logger.info(
                 "Skipping post-merge GitHub actions; GITHUB_TOKEN not configured",
@@ -499,12 +713,6 @@ class RemediationOrchestrator:
                 "Failed to post merge notification comment",
                 extra={"task_id": task_id, "issue_number": task.github_issue_number},
             )
-
-        refreshed = self.repo.get_by_id(task_id)
-        if refreshed is None:
-            return
-
-        await self.sync_final_consumption(task_id)
 
         refreshed = self.repo.get_by_id(task_id)
         if refreshed is None:

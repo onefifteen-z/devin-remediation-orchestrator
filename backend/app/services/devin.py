@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -11,6 +12,18 @@ from app.schemas.devin_automation import (
     AutomationResponse,
     parse_automation_list_response,
     parse_automation_response,
+)
+from app.schemas.devin_insights import SessionInsights, parse_session_insights_list
+from app.schemas.devin_metrics import (
+    OrgActiveUsersPoint,
+    OrgPrMetrics,
+    OrgSessionMetrics,
+    OrgUsageMetrics,
+    parse_org_active_users,
+    parse_org_active_users_series,
+    parse_org_pr_metrics,
+    parse_org_session_metrics,
+    parse_org_usage_metrics,
 )
 from app.schemas.devin_schedule import ScheduleResponse, parse_schedule_response
 from app.schemas.devin_session import DevinSessionResponse, parse_devin_session_response
@@ -107,20 +120,35 @@ class DevinClient:
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        max_attempts: int = 3,
     ) -> dict[str, Any]:
         client = await self._get_client()
-        try:
-            response = await client.request(method, path, json=json, params=params)
-        except httpx.TimeoutException:
-            raise DevinAPIError("Devin API request timed out") from None
+        last_error: DevinAPIError | None = None
+        for attempt in range(max_attempts):
+            try:
+                response = await client.request(method, path, json=json, params=params)
+            except httpx.TimeoutException:
+                last_error = DevinAPIError("Devin API request timed out")
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.5 * (2**attempt))
+                    continue
+                raise last_error from None
 
-        if response.status_code >= 400:
-            self._handle_error(response)
+            if response.status_code in {429, 502, 503, 504} and attempt < max_attempts - 1:
+                await asyncio.sleep(0.5 * (2**attempt))
+                continue
 
-        try:
-            return response.json()
-        except ValueError:
-            raise DevinAPIError("Malformed Devin API response") from None
+            if response.status_code >= 400:
+                self._handle_error(response)
+
+            try:
+                return response.json()
+            except ValueError:
+                raise DevinAPIError("Malformed Devin API response") from None
+
+        if last_error:
+            raise last_error
+        raise DevinAPIError("Devin API request failed")
 
     async def create_session(
         self,
@@ -173,6 +201,18 @@ class DevinClient:
         )
         return session
 
+    async def list_session_insights(self, limit: int = 100) -> list[SessionInsights]:
+        """Fetch insights for every org session in one call, avoiding per-task requests."""
+        data = await self._request_json(
+            "GET",
+            self._org_path("/sessions/insights"),
+            params={"limit": limit},
+        )
+        try:
+            return parse_session_insights_list(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
     async def send_message(self, devin_id: str, message: str) -> DevinSessionResult:
         data = await self._request_json(
             "POST",
@@ -187,6 +227,12 @@ class DevinClient:
         time_after: int | None = None,
         time_before: int | None = None,
     ) -> ConsumptionResponse:
+        """Consumption reporting via the API is Enterprise-plan only.
+
+        On other plans every consumption endpoint answers 200 with an empty
+        ledger rather than an error, so callers cannot distinguish "no usage"
+        from "not entitled".
+        """
         params: dict[str, Any] = {}
         if time_after is not None:
             params["time_after"] = time_after
@@ -207,6 +253,11 @@ class DevinClient:
         time_after: int | None = None,
         time_before: int | None = None,
     ) -> ConsumptionResponse:
+        """Enterprise-plan only; see get_session_consumption.
+
+        Unlike the /metrics endpoints, the time window has no observable effect
+        when the org is not entitled.
+        """
         params: dict[str, Any] = {}
         if time_after is not None:
             params["time_after"] = time_after
@@ -220,6 +271,80 @@ class DevinClient:
         try:
             return parse_consumption_response(data)
         except Exception:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def _org_metrics_json(
+        self,
+        suffix: str,
+        time_after: int,
+        time_before: int,
+    ) -> Any:
+        """Metrics endpoints reject missing windows with 422, so both bounds are required."""
+        return await self._request_json(
+            "GET",
+            self._org_path(f"/metrics/{suffix}"),
+            params={"time_after": time_after, "time_before": time_before},
+        )
+
+    async def get_org_usage_metrics(
+        self, time_after: int, time_before: int
+    ) -> OrgUsageMetrics:
+        data = await self._org_metrics_json("usage", time_after, time_before)
+        try:
+            return parse_org_usage_metrics(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_pr_metrics(self, time_after: int, time_before: int) -> OrgPrMetrics:
+        data = await self._org_metrics_json("prs", time_after, time_before)
+        try:
+            return parse_org_pr_metrics(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_session_metrics(
+        self, time_after: int, time_before: int
+    ) -> OrgSessionMetrics:
+        data = await self._org_metrics_json("sessions", time_after, time_before)
+        try:
+            return parse_org_session_metrics(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_active_users(
+        self, time_after: int, time_before: int
+    ) -> OrgActiveUsersPoint:
+        data = await self._org_metrics_json("active-users", time_after, time_before)
+        try:
+            return parse_org_active_users(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_daily_active_users(
+        self, time_after: int, time_before: int
+    ) -> list[OrgActiveUsersPoint]:
+        data = await self._org_metrics_json("dau", time_after, time_before)
+        try:
+            return parse_org_active_users_series(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_weekly_active_users(
+        self, time_after: int, time_before: int
+    ) -> list[OrgActiveUsersPoint]:
+        data = await self._org_metrics_json("wau", time_after, time_before)
+        try:
+            return parse_org_active_users_series(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
+
+    async def get_org_monthly_active_users(
+        self, time_after: int, time_before: int
+    ) -> list[OrgActiveUsersPoint]:
+        data = await self._org_metrics_json("mau", time_after, time_before)
+        try:
+            return parse_org_active_users_series(data)
+        except ValueError:
             raise DevinAPIError("Malformed Devin API response") from None
 
     async def create_schedule(self, body: dict[str, Any]) -> ScheduleResponse:

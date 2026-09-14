@@ -133,6 +133,20 @@ Verified V3 endpoints (see [Devin API docs](https://docs.devin.ai/api-reference/
 
 Live calls gated by `DEVIN_LIVE_ENABLED=false` by default. Scheduled Devin gated by `DEVIN_SCHEDULED_ENABLED=false`.
 
+### Authority boundaries (Phase 6)
+
+| Domain | Authoritative source |
+|--------|---------------------|
+| Task business lifecycle | `RemediationTask.status` |
+| Trigger attribution | `RemediationTask.trigger_source` |
+| Devin execution | `devin_status`, `devin_status_detail` |
+| Merge state | GitHub PR webhooks (`MERGED`, `merged_at`) |
+| CI validation | GitHub `check_run` webhooks |
+| Engineering report | Structured output (does not set `MERGED`) |
+| Business metrics | Production tasks only (`task_kind=remediation`) |
+
+Duplicate remediation prevention is issue-level (`repository` + `issue_number`) across webhook, manual API, scan, and scheduled intake. A final guard blocks `create_session` when `devin_session_id` is already set.
+
 ### Phase 5: Playbook + Structured Output + Consumption
 
 ```mermaid

@@ -3,6 +3,47 @@ export interface ThroughputPoint {
   count: number
 }
 
+export interface OrgUsageMetrics {
+  sessions_count: number
+  searches_count: number
+  prs_created_count: number
+  prs_merged_count: number
+}
+
+export interface OrgPrMetrics {
+  prs_created_count: number
+  prs_opened_count: number
+  prs_merged_count: number
+  prs_closed_count: number
+  prs_taken_over_count: number
+  prs_taken_over_opened_count: number
+  prs_taken_over_merged_count: number
+  prs_taken_over_closed_count: number
+}
+
+export interface OrgSessionMetrics {
+  sessions_created_count: number
+  sessions_created_by_size: Record<string, number>
+  sessions_created_by_origin: Record<string, number>
+  sessions_created_with_playbook_count: number
+  sessions_created_with_search_count: number
+  sessions_with_merged_prs_count: number
+  sessions_with_merged_prs_by_size: Record<string, number>
+  avg_acus_per_session: number
+}
+
+export interface DevinOrgMetrics {
+  window_start: number
+  window_end: number
+  usage: OrgUsageMetrics
+  pull_requests: OrgPrMetrics
+  sessions: OrgSessionMetrics
+  active_users: number
+  peak_dau: number
+  peak_wau: number
+  peak_mau: number
+}
+
 export interface Metrics {
   total_tasks: number
   active_tasks: number
@@ -25,6 +66,8 @@ export interface Metrics {
   average_verified_acu_per_task: number
   consumption_api_available: boolean | null
   devin_org_total_acus: number | null
+  devin_org_metrics: DevinOrgMetrics | null
+  org_metrics_window_days: number
   tasks_with_prs: number
   failed_tasks: number
   escalated_tasks: number

@@ -1,6 +1,7 @@
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react"
 import { Fragment, useState } from "react"
 import { StatusBadge } from "@/components/StatusBadge"
+import { Badge } from "@/components/ui/badge"
 import {
   Table,
   TableBody,
@@ -9,99 +10,79 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { RemediationResultPanel } from "@/components/RemediationResultPanel"
 import { formatCiRepairLine } from "@/lib/ci"
 import {
   extractPrNumber,
-  formatAcuDisplay,
   formatDevinExecutionForTask,
   formatPrState,
   formatTriggerSource,
   getDevinAlertForTask,
-  parseStructuredResult,
+  getTriggerSourceBadgeVariant,
   terminalTaskStatuses,
 } from "@/lib/devin"
+import { formatMessageTotal, formatSessionSize } from "@/lib/sessionInsights"
+import { getNextSortParams, isSmokeTestTask, parseIssueLabels } from "@/lib/taskList"
 import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
+import type { TaskListParams, TaskSortField } from "@/types/taskList"
 
 interface TaskTableProps {
   tasks: Task[]
+  sortBy: TaskSortField
+  sortOrder: TaskListParams["sort_order"]
+  onSortChange: (next: Pick<TaskListParams, "sort_by" | "sort_order" | "offset">) => void
 }
 
-function StructuredResultDetails({ task }: { task: Task }) {
-  const structured = parseStructuredResult(task.structured_result_json)
-  const hasDetails =
-    task.root_cause ||
-    task.implementation_summary ||
-    structured.tests_performed.length > 0 ||
-    structured.residual_risks.length > 0 ||
-    task.blocker ||
-    task.playbook_id ||
-    task.devin_tags
+interface SortableHeaderProps {
+  field: TaskSortField
+  label: string
+  sortBy: TaskSortField
+  sortOrder: TaskListParams["sort_order"]
+  onSort: (field: TaskSortField) => void
+  className?: string
+}
 
-  if (!hasDetails) {
-    return <p className="text-xs text-muted-foreground">No structured result recorded.</p>
-  }
+function SortableHeader({
+  field,
+  label,
+  sortBy,
+  sortOrder,
+  onSort,
+  className,
+}: SortableHeaderProps) {
+  const active = sortBy === field
 
   return (
-    <div className="grid gap-2 text-xs sm:grid-cols-2">
-      {task.root_cause && (
-        <div>
-          <p className="font-medium text-foreground">Root Cause</p>
-          <p className="text-muted-foreground">{task.root_cause}</p>
-        </div>
-      )}
-      {task.implementation_summary && (
-        <div>
-          <p className="font-medium text-foreground">Implementation</p>
-          <p className="text-muted-foreground">{task.implementation_summary}</p>
-        </div>
-      )}
-      {structured.tests_performed.length > 0 && (
-        <div>
-          <p className="font-medium text-foreground">Tests</p>
-          <ul className="list-disc pl-4 text-muted-foreground">
-            {structured.tests_performed.map((test) => (
-              <li key={`${test.command}-${test.result}`}>
-                {test.command} — {test.result}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {structured.residual_risks.length > 0 && (
-        <div>
-          <p className="font-medium text-foreground">Residual Risks</p>
-          <ul className="list-disc pl-4 text-muted-foreground">
-            {structured.residual_risks.map((risk) => (
-              <li key={risk}>{risk}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {task.blocker && (
-        <div>
-          <p className="font-medium text-foreground">Blocker</p>
-          <p className="text-muted-foreground">{task.blocker}</p>
-        </div>
-      )}
-      {task.playbook_id && (
-        <div>
-          <p className="font-medium text-foreground">Playbook</p>
-          <p className="font-mono text-muted-foreground">{task.playbook_id}</p>
-        </div>
-      )}
-      {task.devin_tags && (
-        <div>
-          <p className="font-medium text-foreground">Devin Tags</p>
-          <p className="font-mono text-muted-foreground">{task.devin_tags}</p>
-        </div>
-      )}
-    </div>
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className="group inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
+      >
+        <span>{label}</span>
+        <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
+          {active ? (
+            sortOrder === "desc" ? (
+              <ArrowDown className="h-3 w-3 text-foreground" />
+            ) : (
+              <ArrowUp className="h-3 w-3 text-foreground" />
+            )
+          ) : (
+            <ArrowDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-30" />
+          )}
+        </span>
+      </button>
+    </TableHead>
   )
 }
 
-export function TaskTable({ tasks }: TaskTableProps) {
+export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableProps) {
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(new Set())
+
+  const handleSort = (field: TaskSortField) => {
+    onSortChange(getNextSortParams({ sort_by: sortBy, sort_order: sortOrder }, field))
+  }
 
   const toggleExpanded = (taskId: number) => {
     setExpandedTaskIds((current) => {
@@ -120,15 +101,44 @@ export function TaskTable({ tasks }: TaskTableProps) {
       <TableHeader>
         <TableRow>
           <TableHead className="w-8" />
-          <TableHead>Issue</TableHead>
-          <TableHead>Source</TableHead>
-          <TableHead>Status</TableHead>
+          <SortableHeader
+            field="repository"
+            label="Issue"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="trigger_source"
+            label="Source"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="status"
+            label="Status"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
           <TableHead>Devin</TableHead>
-          <TableHead>PR</TableHead>
-          <TableHead>ACU</TableHead>
-          <TableHead>Created</TableHead>
-          <TableHead>Updated</TableHead>
-          <TableHead>Merged At</TableHead>
+          <TableHead>PR / CI</TableHead>
+          <TableHead>Size</TableHead>
+          <SortableHeader
+            field="created_at"
+            label="Created"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="merged_at"
+            label="Merged At"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -146,7 +156,15 @@ export function TaskTable({ tasks }: TaskTableProps) {
             task.failure_type,
             task.ci_repair_attempts,
             task.max_ci_repair_attempts,
+            task.ci_repair_message_sent_at,
+            task.ci_repair_verified_at,
+            task.ci_classification_reason,
           )
+          const messageTotal = formatMessageTotal(
+            task.num_user_messages,
+            task.num_devin_messages,
+          )
+          const issueLabels = parseIssueLabels(task.issue_labels)
           const isExpandable = terminalTaskStatuses.includes(task.status)
           const isExpanded = expandedTaskIds.has(task.id)
 
@@ -159,7 +177,7 @@ export function TaskTable({ tasks }: TaskTableProps) {
                       type="button"
                       className="text-muted-foreground hover:text-foreground"
                       onClick={() => toggleExpanded(task.id)}
-                      aria-label="Toggle structured result details"
+                      aria-label="Toggle task details"
                     >
                       {isExpanded ? (
                         <ChevronDown className="h-4 w-4" />
@@ -180,10 +198,33 @@ export function TaskTable({ tasks }: TaskTableProps) {
                       {task.github_repository}#{task.github_issue_number}
                     </a>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.issue_title}</p>
+                    {issueLabels.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {issueLabels.map((label) => (
+                          <Badge
+                            key={label}
+                            variant="outline"
+                            className="border-border px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                          >
+                            {label}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {isSmokeTestTask(task) && (
+                      <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Smoke test{task.issue_type.toLowerCase() === "dummy" ? " · dummy" : ""}
+                      </p>
+                    )}
                   </div>
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTriggerSource(task.trigger_source)}
+                <TableCell>
+                  <Badge
+                    variant={getTriggerSourceBadgeVariant(task.trigger_source)}
+                    className="whitespace-nowrap font-normal"
+                  >
+                    {formatTriggerSource(task.trigger_source)}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={task.status} />
@@ -232,21 +273,25 @@ export function TaskTable({ tasks }: TaskTableProps) {
                         <p className="text-xs text-muted-foreground">{prState}</p>
                       )}
                       {ciLine && (
-                        <p className="mt-0.5 text-xs text-muted-foreground">CI: {ciLine}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{ciLine}</p>
                       )}
                     </div>
+                  ) : ciLine ? (
+                    <p className="text-xs text-muted-foreground">{ciLine}</p>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell className="font-mono text-xs tabular-nums">
-                  {formatAcuDisplay(task.acu_used, task.acu_source, task.acu_verified)}
+                <TableCell>
+                  <div className="font-mono text-xs tabular-nums">
+                    {formatSessionSize(task.session_size)}
+                  </div>
+                  {messageTotal && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{messageTotal}</p>
+                  )}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {formatDateTime(task.created_at)}
-                </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatDateTime(task.updated_at)}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
                   {task.merged_at ? formatDateTime(task.merged_at) : "—"}
@@ -255,8 +300,8 @@ export function TaskTable({ tasks }: TaskTableProps) {
               {isExpandable && isExpanded && (
                 <TableRow>
                   <TableCell />
-                  <TableCell colSpan={9} className="bg-muted/20">
-                    <StructuredResultDetails task={task} />
+                  <TableCell colSpan={8} className="bg-muted/20">
+                    <RemediationResultPanel task={task} />
                   </TableCell>
                 </TableRow>
               )}

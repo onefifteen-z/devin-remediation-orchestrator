@@ -1,4 +1,5 @@
-import type { TaskStatus } from "@/types/task"
+import { isSmokeTestTask } from "@/lib/taskList"
+import type { Task, TaskStatus } from "@/types/task"
 
 const STATUS_DETAIL_LABELS: Record<string, string> = {
   usage_limit_exceeded: "usage limit exceeded",
@@ -43,7 +44,7 @@ export function formatDevinExecution(
 export function formatTaskSource(
   devinOrigin: string | null | undefined,
 ): string {
-  if (!devinOrigin) return "GitHub"
+  if (!devinOrigin) return "—"
   return ORIGIN_LABELS[devinOrigin] ?? devinOrigin
 }
 
@@ -54,16 +55,43 @@ export function formatTriggerSource(
   return TRIGGER_SOURCE_LABELS[triggerSource] ?? triggerSource.replaceAll("_", " ")
 }
 
+/**
+ * Distinct hues only so multiple sources are scannable in one pass; the
+ * variants carry no severity meaning.
+ */
+export function getTriggerSourceBadgeVariant(
+  triggerSource: string | null | undefined,
+): "default" | "info" | "success" | "warning" {
+  switch (triggerSource) {
+    case "github_webhook":
+      return "info"
+    case "scheduled":
+      return "success"
+    case "manual_api":
+      return "warning"
+    default:
+      return "default"
+  }
+}
+
 export function formatDevinExecutionForTask(
   taskStatus: TaskStatus,
   devinStatus: string | null | undefined,
   devinStatusDetail: string | null | undefined,
 ): string {
   if (TERMINAL_TASK_STATUSES.includes(taskStatus)) {
-    if (taskStatus === "MERGED") return "completed"
-    if (taskStatus === "FAILED") return "failed"
-    return "escalated"
+    if (taskStatus === "MERGED") return "Completed"
+    if (taskStatus === "FAILED") return "Failed"
+    return "Escalated"
   }
+  return formatDevinExecution(devinStatus, devinStatusDetail)
+}
+
+export function formatRawDevinState(
+  devinStatus: string | null | undefined,
+  devinStatusDetail: string | null | undefined,
+): string | null {
+  if (!devinStatus) return null
   return formatDevinExecution(devinStatus, devinStatusDetail)
 }
 
@@ -98,6 +126,27 @@ export function getDevinAlertForTask(
   return getDevinAlert(devinStatus, devinStatusDetail)
 }
 
+export function getAttentionSummary(tasks: Task[]): {
+  escalated: number
+  failed: number
+  needsHuman: number
+} {
+  let escalated = 0
+  let failed = 0
+  let needsHuman = 0
+
+  for (const task of tasks) {
+    if (isSmokeTestTask(task)) continue
+    if (task.status === "ESCALATED") escalated += 1
+    if (task.status === "FAILED") failed += 1
+    if (getDevinAlertForTask(task.status, task.devin_status, task.devin_status_detail)) {
+      needsHuman += 1
+    }
+  }
+
+  return { escalated, failed, needsHuman }
+}
+
 export function formatPrState(prState: string | null | undefined): string | null {
   if (!prState) return null
   return prState.charAt(0).toUpperCase() + prState.slice(1)
@@ -109,6 +158,26 @@ export function extractPrNumber(prUrl: string): string | null {
 }
 
 export const terminalTaskStatuses = TERMINAL_TASK_STATUSES
+
+export function getRawDevinStateSnapshotNote(taskStatus: TaskStatus): string | null {
+  if (!TERMINAL_TASK_STATUSES.includes(taskStatus)) {
+    return null
+  }
+  return "Session snapshot (last sync before or at terminal state)"
+}
+
+export function getRawDevinStateClarification(
+  taskStatus: TaskStatus,
+  devinStatusDetail: string | null | undefined,
+): string | null {
+  if (
+    taskStatus === "MERGED" &&
+    devinStatusDetail?.toLowerCase() === "waiting_for_user"
+  ) {
+    return "Business outcome: merged — session may have ended after last sync"
+  }
+  return null
+}
 
 export function formatAcuDisplay(
   acuUsed: number | null | undefined,
@@ -122,9 +191,34 @@ export function formatAcuDisplay(
     return "—"
   }
   if (acuVerified) {
-    return `${acuUsed.toFixed(1)} ACU`
+    return `${acuUsed.toFixed(1)} ACU · Verified`
   }
-  return `${acuUsed.toFixed(1)} ACU (reported)`
+  return `${acuUsed.toFixed(1)} ACU · Reported`
+}
+
+export function formatVerifiedAcuTotal(verifiedTotalAcu: number): string {
+  if (verifiedTotalAcu <= 0) {
+    return "No API usage available"
+  }
+  return verifiedTotalAcu.toFixed(1)
+}
+
+/**
+ * A zero total is expected rather than exceptional here: self-serve orgs are
+ * billed in on-demand USD and only Enterprise plans report ACU over the API,
+ * so the consumption endpoints return an empty ledger with a 200.
+ */
+export function getVerifiedAcuNote(
+  verifiedTotalAcu: number,
+  consumptionApiAvailable: boolean | null,
+): string {
+  if (consumptionApiAvailable === false) {
+    return "Consumption API unavailable"
+  }
+  if (verifiedTotalAcu <= 0) {
+    return "Enterprise ACU reporting unavailable"
+  }
+  return "Sum of consumption-verified task ACU only"
 }
 
 export function parseStructuredResult(

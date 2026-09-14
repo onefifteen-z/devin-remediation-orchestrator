@@ -12,6 +12,14 @@ from app.services.devin import DevinClient
 from app.services.devin_analytics import DevinAnalyticsService
 from app.services.task_classification import is_production_remediation
 
+ORG_METRICS_WINDOW_DAYS = 30
+
+
+def _pst_day_boundary(days_ago: int) -> int:
+    """Devin billing days start at midnight PST (08:00:00 UTC)."""
+    day = (datetime.now(UTC) - timedelta(days=days_ago)).date()
+    return int(datetime(day.year, day.month, day.day, 8, 0, 0, tzinfo=UTC).timestamp())
+
 
 class MetricsService:
     def __init__(self, db: Session):
@@ -22,17 +30,17 @@ class MetricsService:
         if not tasks:
             return MetricsResponse()
 
-        total = len(tasks)
         production_tasks = [task for task in tasks if is_production_remediation(task)]
-        active = sum(1 for t in tasks if t.status in ACTIVE_STATUSES)
-        merged = [t for t in tasks if t.status == TaskStatus.MERGED]
+        total = len(production_tasks)
+        active = sum(1 for t in production_tasks if t.status in ACTIVE_STATUSES)
         merged_production = [
             t for t in production_tasks if t.status == TaskStatus.MERGED
         ]
-        failed = sum(1 for t in tasks if t.status == TaskStatus.FAILED)
-        escalated = sum(1 for t in tasks if t.status == TaskStatus.ESCALATED)
-        tasks_with_prs = sum(1 for t in tasks if t.pr_url is not None)
-        terminal = [t for t in tasks if t.status in TERMINAL_STATUSES]
+        failed = sum(1 for t in production_tasks if t.status == TaskStatus.FAILED)
+        escalated = sum(
+            1 for t in production_tasks if t.status == TaskStatus.ESCALATED
+        )
+        tasks_with_prs = sum(1 for t in production_tasks if t.pr_url is not None)
         production_terminal = [
             t for t in production_tasks if t.status in TERMINAL_STATUSES
         ]
@@ -47,7 +55,7 @@ class MetricsService:
         )
 
         mttr_values = []
-        for task in merged:
+        for task in merged_production:
             if task.merged_at and task.started_at:
                 mttr_values.append((task.merged_at - task.started_at).total_seconds())
         median_mttr = _median(mttr_values) if mttr_values else None
@@ -55,18 +63,16 @@ class MetricsService:
         now = datetime.now(UTC)
         seven_days_ago = now - timedelta(days=7)
         throughput_7d = sum(
-            1 for t in tasks if _ensure_aware(t.created_at) >= seven_days_ago
+            1
+            for t in production_tasks
+            if _ensure_aware(t.created_at) >= seven_days_ago
         )
-        throughput_by_day = _throughput_by_day(tasks, days=7)
+        throughput_by_day = _throughput_by_day(production_tasks, days=7)
 
-        ci_metrics = _compute_ci_metrics(tasks)
-
-        acu_values = [t.acu_used for t in tasks if t.acu_used is not None]
-        total_acu = sum(acu_values)
-        average_acu = total_acu / len(acu_values) if acu_values else 0.0
+        ci_metrics = _compute_ci_metrics(production_tasks)
 
         verified_values = [
-            t.acu_used for t in tasks if t.acu_verified and t.acu_used is not None
+            t.acu_used for t in production_tasks if t.acu_verified and t.acu_used is not None
         ]
         verified_total_acu = sum(verified_values)
         average_verified_acu = (
@@ -92,8 +98,8 @@ class MetricsService:
             unknown_ci_failures=ci_metrics["unknown_ci_failures"],
             ci_repair_attempts=ci_metrics["ci_repair_attempts"],
             ci_repair_successes=ci_metrics["ci_repair_successes"],
-            total_acu=round(total_acu, 2),
-            average_acu_per_task=round(average_acu, 2),
+            total_acu=round(verified_total_acu, 2),
+            average_acu_per_task=round(average_verified_acu, 2),
             verified_total_acu=round(verified_total_acu, 2),
             average_verified_acu_per_task=round(average_verified_acu, 2),
             consumption_api_available=consumption_api_available,
@@ -117,6 +123,13 @@ class MetricsService:
             metrics.consumption_api_available = analytics.consumption_api_available
             if isinstance(result, ConsumptionResponse):
                 metrics.devin_org_total_acus = round(result.total_acus, 2)
+
+            metrics.org_metrics_window_days = ORG_METRICS_WINDOW_DAYS
+            metrics.devin_org_metrics = await analytics.get_org_metrics_snapshot(
+                time_after=_pst_day_boundary(ORG_METRICS_WINDOW_DAYS - 1),
+                # The next PST midnight, so today is covered in full.
+                time_before=_pst_day_boundary(-1),
+            )
         finally:
             await client.close()
         return metrics
@@ -126,6 +139,9 @@ def _compute_ci_metrics(tasks: list[RemediationTask]) -> dict:
     tasks_with_ci_failures = [t for t in tasks if t.ci_failure_at is not None]
     ci_repair_successes = sum(
         1 for t in tasks_with_ci_failures if t.ci_repair_verified_at is not None
+    )
+    ci_repair_attempted = sum(
+        1 for t in tasks_with_ci_failures if t.ci_repair_message_sent_at is not None
     )
     ci_recovery_rate = (
         ci_repair_successes / len(tasks_with_ci_failures)
@@ -150,6 +166,7 @@ def _compute_ci_metrics(tasks: list[RemediationTask]) -> dict:
             1 for t in tasks_with_ci_failures if t.failure_type == FailureType.UNKNOWN.value
         ),
         "ci_repair_attempts": sum(t.ci_repair_attempts for t in tasks),
+        "ci_repair_attempted": ci_repair_attempted,
         "ci_repair_successes": ci_repair_successes,
         "ci_recovery_rate": round(ci_recovery_rate, 4),
     }

@@ -1,20 +1,38 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { AlertCircle, RefreshCw, ScanSearch } from "lucide-react"
 import { useState } from "react"
-import { fetchMetrics, fetchTasks, scanGitHubIssues } from "@/api/client"
+import { fetchMetrics, fetchTasks, refreshTasksFromDevin, scanGitHubIssues } from "@/api/client"
+import { DevinOrgMetricsSection } from "@/components/DevinOrgMetricsSection"
 import { MetricCard } from "@/components/MetricCard"
+import { TaskListControls } from "@/components/TaskListControls"
 import { TaskTable } from "@/components/TaskTable"
 import { ThroughputChart } from "@/components/ThroughputChart"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatVerifiedAcuTotal, getAttentionSummary, getVerifiedAcuNote } from "@/lib/devin"
+import { DEFAULT_PAGE_SIZE } from "@/lib/taskList"
 import { formatDuration, formatPercent } from "@/lib/utils"
+import type { TaskListParams } from "@/types/taskList"
+
+const DEFAULT_TASK_LIST_PARAMS: TaskListParams = {
+  limit: DEFAULT_PAGE_SIZE,
+  offset: 0,
+  include_smoke_tests: false,
+  sort_by: "created_at",
+  sort_order: "desc",
+}
 
 export function Dashboard() {
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
+  const [taskListParams, setTaskListParams] = useState<TaskListParams>(
+    DEFAULT_TASK_LIST_PARAMS,
+  )
 
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
@@ -23,8 +41,21 @@ export function Dashboard() {
   })
 
   const tasksQuery = useQuery({
-    queryKey: ["tasks"],
-    queryFn: fetchTasks,
+    queryKey: ["tasks", taskListParams],
+    queryFn: () => fetchTasks(taskListParams),
+    refetchInterval: 15000,
+  })
+
+  const attentionQuery = useQuery({
+    queryKey: ["tasks", "attention"],
+    queryFn: () =>
+      fetchTasks({
+        include_smoke_tests: false,
+        limit: 500,
+        offset: 0,
+        sort_by: "created_at",
+        sort_order: "desc",
+      }),
     refetchInterval: 15000,
   })
 
@@ -47,13 +78,25 @@ export function Dashboard() {
     },
   })
 
-  const refetch = () => {
-    metricsQuery.refetch()
-    tasksQuery.refetch()
+  const refetch = async () => {
+    setIsRefreshing(true)
+    try {
+      await refreshTasksFromDevin()
+      await Promise.all([
+        metricsQuery.refetch(),
+        tasksQuery.refetch(),
+        attentionQuery.refetch(),
+      ])
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   const metrics = metricsQuery.data
   const tasks = tasksQuery.data?.items ?? []
+  const taskTotal = tasksQuery.data?.total ?? 0
+  const attention = getAttentionSummary(attentionQuery.data?.items ?? [])
+  const attentionCount = attention.escalated + attention.failed + attention.needsHuman
 
   return (
     <div className="min-h-screen">
@@ -75,9 +118,9 @@ export function Dashboard() {
               <ScanSearch className="mr-2 h-3.5 w-3.5" />
               {scanMutation.isPending ? "Scanning..." : "Scan labeled issues"}
             </Button>
-            <Button variant="outline" size="sm" onClick={refetch} disabled={isLoading}>
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />
-              Refresh
+            <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isLoading || isRefreshing}>
+              <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Syncing..." : "Refresh"}
             </Button>
           </div>
         </div>
@@ -111,41 +154,56 @@ export function Dashboard() {
           </Alert>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        {attentionCount > 0 && (
+          <Alert>
+            <AlertTitle>Needs attention</AlertTitle>
+            <AlertDescription>
+              {attention.escalated > 0 && `${attention.escalated} escalated`}
+              {attention.escalated > 0 && attention.failed > 0 && " · "}
+              {attention.failed > 0 && `${attention.failed} failed`}
+              {(attention.escalated > 0 || attention.failed > 0) && attention.needsHuman > 0 && " · "}
+              {attention.needsHuman > 0 && `${attention.needsHuman} waiting for human`}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard
-            title="Active Tasks"
+            title="Active"
             value={metrics ? String(metrics.active_tasks) : "—"}
-            loading={isLoading}
-          />
-          <MetricCard
-            title="Tasks with PRs"
-            value={metrics ? String(metrics.tasks_with_prs) : "—"}
+            description="Production remediations in progress"
             loading={isLoading}
           />
           <MetricCard
             title="Merge Rate"
             value={metrics ? formatPercent(metrics.merge_rate) : "—"}
-            description="Production remediations merged / production tasks (excludes smoke tests)"
+            description="Merged / production remediation tasks (excludes smoke tests)"
             loading={isLoading}
           />
           <MetricCard
             title="Median MTTR"
             value={metrics ? formatDuration(metrics.median_mttr_seconds) : "—"}
+            description="merged_at − started_at for merged production tasks"
             loading={isLoading}
           />
           <MetricCard
-            title="Total ACU"
-            value={metrics ? metrics.total_acu.toFixed(1) : "—"}
-            description="All reported session values (may include unverified 0.0)"
+            title="CI Recovery"
+            value={metrics ? formatPercent(metrics.ci_recovery_rate) : "—"}
+            description="Verified CI recoveries / tasks with CI failures"
             loading={isLoading}
           />
           <MetricCard
-            title="Verified ACU"
-            value={metrics ? metrics.verified_total_acu.toFixed(1) : "—"}
+            title="Devin Usage"
+            value={
+              metrics ? formatVerifiedAcuTotal(metrics.verified_total_acu) : "—"
+            }
             description={
-              metrics?.consumption_api_available === false
-                ? "Consumption API unavailable"
-                : "Sum of consumption-verified task ACU"
+              metrics
+                ? getVerifiedAcuNote(
+                    metrics.verified_total_acu,
+                    metrics.consumption_api_available,
+                  )
+                : undefined
             }
             loading={isLoading}
           />
@@ -157,13 +215,44 @@ export function Dashboard() {
           <ThroughputChart data={metrics?.throughput_by_day ?? []} />
         )}
 
+        <DevinOrgMetricsSection
+          orgMetrics={metrics?.devin_org_metrics ?? null}
+          windowDays={metrics?.org_metrics_window_days ?? 30}
+          loading={isLoading}
+        />
+
         <Separator />
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle>Recent Remediations</CardTitle>
+            <label
+              htmlFor="show-smoke-tests"
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+            >
+              <span className="hidden sm:inline">Show smoke tests</span>
+              <span className="sm:hidden">Smoke tests</span>
+              <Switch
+                id="show-smoke-tests"
+                checked={Boolean(taskListParams.include_smoke_tests)}
+                onCheckedChange={(checked) =>
+                  setTaskListParams((current) => ({
+                    ...current,
+                    include_smoke_tests: checked,
+                    offset: 0,
+                  }))
+                }
+              />
+            </label>
           </CardHeader>
           <CardContent>
+            <TaskListControls
+              params={taskListParams}
+              total={taskTotal}
+              onChange={(next) =>
+                setTaskListParams((current) => ({ ...current, ...next }))
+              }
+            />
             {isLoading ? (
               <div className="space-y-3">
                 <Skeleton className="h-10 w-full" />
@@ -172,21 +261,39 @@ export function Dashboard() {
               </div>
             ) : tasks.length === 0 ? (
               <Alert>
-                <AlertTitle>No remediations yet</AlertTitle>
+                <AlertTitle>No tasks match</AlertTitle>
                 <AlertDescription>
-                  Add the <code className="rounded bg-muted px-1 py-0.5 text-xs">devin-remediate</code>{" "}
-                  label to a GitHub issue, then click Scan labeled issues to import existing open issues.
+                  {taskListParams.include_smoke_tests ||
+                  taskListParams.status ||
+                  taskListParams.search ||
+                  taskListParams.trigger_source
+                    ? "Try clearing filters or enabling smoke tests."
+                    : (
+                      <>
+                        Add the{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-xs">devin-remediate</code>{" "}
+                        label to a GitHub issue, then click Scan labeled issues to import existing
+                        open issues.
+                      </>
+                    )}
                 </AlertDescription>
               </Alert>
             ) : (
-              <TaskTable tasks={tasks} />
+              <TaskTable
+                tasks={tasks}
+                sortBy={taskListParams.sort_by ?? "created_at"}
+                sortOrder={taskListParams.sort_order ?? "desc"}
+                onSortChange={(next) =>
+                  setTaskListParams((current) => ({ ...current, ...next }))
+                }
+              />
             )}
           </CardContent>
         </Card>
 
         {metrics && metrics.total_tasks > 0 && (
           <div className="grid gap-4 text-xs text-muted-foreground sm:grid-cols-4">
-            <div>Total tasks: {metrics.total_tasks}</div>
+            <div>Production tasks: {metrics.total_tasks}</div>
             <div>Active: {metrics.active_tasks}</div>
             <div>Failed: {metrics.failed_tasks}</div>
             <div>Escalated: {metrics.escalated_tasks}</div>

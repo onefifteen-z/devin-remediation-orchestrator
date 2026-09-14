@@ -163,7 +163,7 @@ without deleting its existing data.
 | `DEVIN_AUTOMATION_ID` | Existing automation ID (`auto-...` from Devin API) for idempotent updates (optional; auto-discovered via metadata when unset) |
 | `DEVIN_SCHEDULE_ID` | Legacy schedules API ID (deprecated; use `DEVIN_AUTOMATION_ID` instead) |
 | `ORCHESTRATOR_PUBLIC_URL` | Public URL for scheduled intake callback (required when scheduling enabled) |
-| `SCHEDULED_INTAKE_TOKEN` | Optional bearer token for `POST /api/scheduled/intake` |
+| `SCHEDULED_INTAKE_TOKEN` | Bearer token for `POST /api/scheduled/intake` (required when `ORCHESTRATOR_PUBLIC_URL` or `DEVIN_SCHEDULED_ENABLED` is set) |
 | `CORS_ORIGINS` | Comma-separated origins |
 | `LOG_LEVEL` | Logging level |
 
@@ -557,9 +557,36 @@ Required configuration:
 DEVIN_SCHEDULED_ENABLED=false
 DEVIN_SCHEDULE_CRON=0 9 * * 1-5
 ORCHESTRATOR_PUBLIC_URL=https://your-orchestrator.example.com
-SCHEDULED_INTAKE_TOKEN=optional-bearer-token
+SCHEDULED_INTAKE_TOKEN=required-when-public-url-or-scheduling-enabled
 DEVIN_AUTOMATION_ID=auto-optional-existing-automation-id
 ```
+
+## Phase 6 Status — Production Hardening & Dashboard Polish
+
+**Implemented:**
+
+- Authoritative `trigger_source` on tasks (`github_webhook`, `manual_api`, `scan`, `scheduled`); dashboard Source uses this, not `devin_origin`
+- Explicit `task_kind` (`remediation` | `smoke_test`) with migration `0007`; smoke tests excluded from business metrics
+- Issue-level idempotency across all trigger paths with structured duplicate logs
+- Final `create_session` guard when `devin_session_id` already exists
+- `SCHEDULED_INTAKE_TOKEN` required when `ORCHESTRATOR_PUBLIC_URL` or `DEVIN_SCHEDULED_ENABLED` is set (constant-time bearer validation)
+- Honest leadership metrics: merge rate, MTTR, CI recovery, verified ACU only
+- Dashboard attention banner, CI repair attempted vs verified, terminal task presentation, expanded audit rows
+
+### Metric definitions
+
+| Metric | Definition |
+|--------|------------|
+| **Merge rate** | `MERGED` production remediations / all production remediation tasks (`task_kind=remediation`) |
+| **Median MTTR** | `median(merged_at - started_at)` for merged production remediations only |
+| **CI recovery** | Tasks with `ci_repair_verified_at` / tasks with `ci_failure_at` (GitHub evidence required) |
+| **Verified ACU** | Sum of `acu_used` where `acu_verified=true` only; unverified session-reported values are not mixed in |
+
+### Safety controls
+
+- `MAX_ACTIVE_SESSIONS`: enforced before session creation; capacity-limited tasks stay `RECEIVED` with `failure_reason=capacity_limited`
+- `MAX_ACU_PER_TASK`: passed to Devin as `max_acu_limit` (hard per-session cap)
+- `DAILY_ACU_CAP`: configured but not strictly enforced when consumption data is unavailable/unverified (best-effort guard only)
 
 #### Required Devin Permissions
 

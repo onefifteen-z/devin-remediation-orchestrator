@@ -10,20 +10,26 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.schemas.scan import ScanResult
 from app.services.orchestration import RemediationOrchestrator
+from app.utils.security import verify_bearer_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/scheduled", tags=["scheduled"])
 
 
+def _intake_token_required(settings: Settings) -> bool:
+    return bool(settings.orchestrator_public_url) or settings.devin_scheduled_enabled
+
+
 def _validate_intake_token(
     settings: Settings,
     authorization: str | None,
 ) -> None:
-    if not settings.scheduled_intake_token:
+    if not _intake_token_required(settings):
         return
-    expected = f"Bearer {settings.scheduled_intake_token}"
-    if authorization != expected:
+    if not settings.scheduled_intake_token:
+        raise HTTPException(status_code=401, detail="Scheduled intake token required")
+    if not verify_bearer_token(authorization, settings.scheduled_intake_token):
         raise HTTPException(status_code=401, detail="Invalid scheduled intake token")
 
 

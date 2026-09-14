@@ -42,6 +42,11 @@ class TriggerSource(str, enum.Enum):
     SCHEDULED = "scheduled"
 
 
+class TaskKind(str, enum.Enum):
+    REMEDIATION = "remediation"
+    SMOKE_TEST = "smoke_test"
+
+
 class RemediationTask(Base):
     __tablename__ = "remediation_tasks"
     __table_args__ = (
@@ -57,6 +62,8 @@ class RemediationTask(Base):
 
     issue_title: Mapped[str] = mapped_column(String(512))
     issue_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    issue_labels: Mapped[str | None] = mapped_column(Text, nullable=True)
+    task_kind: Mapped[str] = mapped_column(String(32), default=TaskKind.REMEDIATION.value)
     trigger_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     devin_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -103,6 +110,12 @@ class RemediationTask(Base):
     acu_used: Mapped[float | None] = mapped_column(Float, nullable=True)
     acu_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     acu_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    session_size: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    num_user_messages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    num_devin_messages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    insights_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    insights_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     remediation_outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
     root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)

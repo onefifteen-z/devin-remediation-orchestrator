@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from unittest.mock import AsyncMock
 
@@ -48,6 +50,42 @@ async def test_scan_creates_only_new_issues(db_session, scan_settings):
         "owner/superset",
         "devin-remediate",
     )
+
+
+@pytest.mark.asyncio
+async def test_scan_persists_domain_labels_as_json(db_session, scan_settings):
+    mock_github = AsyncMock(spec=GitHubClient)
+    mock_github.list_issues_by_label.return_value = [
+        {
+            "repository": "owner/superset",
+            "number": 105,
+            "title": "Helm chart: database credentials",
+            "html_url": "https://github.com/owner/superset/issues/105",
+            "labels": [
+                {"name": "devin-remediate"},
+                {"name": "helm"},
+                {"name": "infrastructure"},
+            ],
+        },
+        {
+            "repository": "owner/superset",
+            "number": 106,
+            "title": "Unlabelled issue",
+            "html_url": "https://github.com/owner/superset/issues/106",
+            "labels": [{"name": "devin-remediate"}],
+        },
+    ]
+
+    orchestrator = RemediationOrchestrator(db_session, scan_settings, github_client=mock_github)
+    await orchestrator.scan_labeled_issues()
+
+    repo = TaskRepository(db_session)
+    labelled = repo.get_by_issue("owner/superset", 105)
+    assert json.loads(labelled.issue_labels) == ["helm", "infrastructure"]
+
+    # Trigger label only leaves nothing to show, so the column stays NULL.
+    unlabelled = repo.get_by_issue("owner/superset", 106)
+    assert unlabelled.issue_labels is None
 
 
 @pytest.mark.asyncio

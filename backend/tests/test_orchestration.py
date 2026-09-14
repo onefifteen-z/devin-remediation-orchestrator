@@ -233,7 +233,7 @@ def test_duplicate_issue_is_skipped(orchestrator):
         )
     )
     assert first_outcome == "created"
-    assert second_outcome == "skipped"
+    assert second_outcome == "duplicate_issue_trigger"
 
 
 def test_issue_unique_constraint_enforced(orchestrator, db_session):

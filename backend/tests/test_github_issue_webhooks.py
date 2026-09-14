@@ -17,6 +17,28 @@ def test_normalized_issue_event_includes_body_and_source():
     assert event_fields["action"] == "labeled"
 
 
+def test_normalized_issue_event_keeps_all_domain_labels():
+    payload = make_issue_labeled_payload()
+    payload["issue"]["labels"] = [
+        {"name": "devin-remediate"},
+        {"name": "helm"},
+        {"name": "infrastructure"},
+    ]
+    event_fields = normalize_issue_event("delivery-normalize-002", payload)
+
+    # The trigger label is dropped; the Source column already conveys it.
+    assert event_fields["issue_labels"] == ["helm", "infrastructure"]
+    assert event_fields["issue_type"] == "helm"
+
+
+def test_normalized_issue_event_has_no_labels_when_only_trigger_label_present():
+    payload = make_issue_labeled_payload()
+    payload["issue"]["labels"] = [{"name": "devin-remediate"}]
+    event_fields = normalize_issue_event("delivery-normalize-003", payload)
+
+    assert event_fields["issue_labels"] == []
+
+
 def test_issues_opened_ignored(client, webhook_secret):
     payload = {
         "action": "opened",
