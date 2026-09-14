@@ -1,3 +1,4 @@
+import { hasCiFailure, hasOpenPr } from "@/lib/ci"
 import { isSmokeTestTask } from "@/lib/taskList"
 import type { Task, TaskStatus } from "@/types/task"
 
@@ -27,6 +28,38 @@ const TRIGGER_SOURCE_LABELS: Record<string, string> = {
 
 const TERMINAL_TASK_STATUSES: TaskStatus[] = ["MERGED", "FAILED", "ESCALATED"]
 
+const ACTIVE_WORKFLOW_STATUSES: TaskStatus[] = ["RECEIVED", "SESSION_CREATED", "RUNNING"]
+
+const CI_PENDING_STATUSES: TaskStatus[] = ["PR_OPENED", "READY_FOR_REVIEW"]
+
+const WORKFLOW_LABELS: Record<TaskStatus, string> = {
+  RECEIVED: "Received",
+  SESSION_CREATED: "Session created",
+  RUNNING: "Running",
+  PR_OPENED: "PR opened",
+  CI_FAILED: "CI failed",
+  READY_FOR_REVIEW: "Ready for review",
+  MERGED: "Merged",
+  FAILED: "Failed",
+  ESCALATED: "Escalated",
+}
+
+export type DevinPresentationState =
+  | "completed"
+  | "failed"
+  | "escalated"
+  | "human_action_required"
+  | "working"
+  | "waiting_for_ci"
+  | "waiting_for_input"
+  | "unknown"
+
+export interface DevinPresentation {
+  state: DevinPresentationState
+  label: string
+  sublabel: string | null
+}
+
 export function formatDevinStatusDetail(detail: string | null | undefined): string | null {
   if (!detail) return null
   return STATUS_DETAIL_LABELS[detail] ?? detail.replaceAll("_", " ")
@@ -41,16 +74,12 @@ export function formatDevinExecution(
   return detailLabel ? `${devinStatus} · ${detailLabel}` : devinStatus
 }
 
-export function formatTaskSource(
-  devinOrigin: string | null | undefined,
-): string {
+export function formatTaskSource(devinOrigin: string | null | undefined): string {
   if (!devinOrigin) return "—"
   return ORIGIN_LABELS[devinOrigin] ?? devinOrigin
 }
 
-export function formatTriggerSource(
-  triggerSource: string | null | undefined,
-): string {
+export function formatTriggerSource(triggerSource: string | null | undefined): string {
   if (!triggerSource) return "Unknown"
   return TRIGGER_SOURCE_LABELS[triggerSource] ?? triggerSource.replaceAll("_", " ")
 }
@@ -74,6 +103,110 @@ export function getTriggerSourceBadgeVariant(
   }
 }
 
+export function formatWorkflowLabel(status: TaskStatus): string {
+  return WORKFLOW_LABELS[status] ?? status
+}
+
+export function hasExplicitBlocker(task: Task): boolean {
+  const detail = task.devin_status_detail?.toLowerCase()
+  const devinStatus = task.devin_status?.toLowerCase()
+
+  if (task.remediation_outcome?.toLowerCase() === "blocked") return true
+  if (task.blocker?.trim()) return true
+  if (task.escalation_reason?.trim()) return true
+  if (devinStatus === "error") return true
+  if (
+    devinStatus === "suspended" &&
+    (detail === "usage_limit_exceeded" || detail === "out_of_credits")
+  ) {
+    return true
+  }
+  return false
+}
+
+function isWaitingForInputDetail(detail: string | null | undefined): boolean {
+  const normalized = detail?.toLowerCase()
+  return normalized === "waiting_for_user" || normalized === "waiting_for_approval"
+}
+
+export function isDevinActivelyWorking(task: Task): boolean {
+  const devinStatus = task.devin_status?.toLowerCase()
+  const detail = task.devin_status_detail?.toLowerCase()
+
+  if (isWaitingForInputDetail(detail)) return false
+
+  if (devinStatus === "running" || devinStatus === "resuming") return true
+  if (detail === "working") return true
+
+  if (ACTIVE_WORKFLOW_STATUSES.includes(task.status)) {
+    if (task.status === "RUNNING" || !task.pr_url) return true
+  }
+
+  return false
+}
+
+function isWaitingForCi(task: Task): boolean {
+  return (
+    hasOpenPr(task) &&
+    !hasCiFailure(task) &&
+    CI_PENDING_STATUSES.includes(task.status) &&
+    !isDevinActivelyWorking(task)
+  )
+}
+
+export function getDevinPresentationState(task: Task): DevinPresentation {
+  if (task.status === "MERGED") {
+    return { state: "completed", label: "Completed", sublabel: null }
+  }
+  if (task.status === "FAILED") {
+    return { state: "failed", label: "Failed", sublabel: null }
+  }
+  if (task.status === "ESCALATED") {
+    return { state: "escalated", label: "Escalated", sublabel: null }
+  }
+
+  if (hasExplicitBlocker(task)) {
+    const devinStatus = task.devin_status?.toLowerCase()
+    const detail = task.devin_status_detail?.toLowerCase()
+    let sublabel: string | null = null
+    if (devinStatus === "error") {
+      sublabel = "Devin session error"
+    } else if (
+      devinStatus === "suspended" &&
+      (detail === "usage_limit_exceeded" || detail === "out_of_credits")
+    ) {
+      sublabel = "Usage limit exceeded"
+    } else if (task.blocker?.trim()) {
+      sublabel = "Blocker reported"
+    }
+    return {
+      state: "human_action_required",
+      label: "Human action required",
+      sublabel,
+    }
+  }
+
+  if (isDevinActivelyWorking(task)) {
+    return { state: "working", label: "Working", sublabel: null }
+  }
+
+  if (isWaitingForCi(task)) {
+    return { state: "waiting_for_ci", label: "Waiting for CI", sublabel: null }
+  }
+
+  if (isWaitingForInputDetail(task.devin_status_detail)) {
+    return { state: "waiting_for_input", label: "Waiting for input", sublabel: null }
+  }
+
+  const raw = formatDevinExecution(task.devin_status, task.devin_status_detail)
+  return {
+    state: "unknown",
+    label: raw === "—" ? "—" : raw,
+    sublabel: null,
+  }
+}
+
+/** @deprecated Use getDevinPresentationState(task).label */
 export function formatDevinExecutionForTask(
   taskStatus: TaskStatus,
   devinStatus: string | null | undefined,
@@ -95,56 +228,25 @@ export function formatRawDevinState(
   return formatDevinExecution(devinStatus, devinStatusDetail)
 }
 
-export function getDevinAlert(
-  devinStatus: string | null | undefined,
-  devinStatusDetail: string | null | undefined,
-): string | null {
-  const detail = devinStatusDetail?.toLowerCase()
-  if (detail === "waiting_for_user" || detail === "waiting_for_approval") {
-    return "Human action required"
-  }
-  if (devinStatus?.toLowerCase() === "error") {
-    return "Devin session error"
-  }
-  if (
-    devinStatus?.toLowerCase() === "suspended" &&
-    (detail === "usage_limit_exceeded" || detail === "out_of_credits")
-  ) {
-    return "Usage limit exceeded"
-  }
-  return null
-}
-
-export function getDevinAlertForTask(
-  taskStatus: TaskStatus,
-  devinStatus: string | null | undefined,
-  devinStatusDetail: string | null | undefined,
-): string | null {
-  if (TERMINAL_TASK_STATUSES.includes(taskStatus)) {
-    return null
-  }
-  return getDevinAlert(devinStatus, devinStatusDetail)
-}
-
 export function getAttentionSummary(tasks: Task[]): {
   escalated: number
   failed: number
-  needsHuman: number
+  needsIntervention: number
 } {
   let escalated = 0
   let failed = 0
-  let needsHuman = 0
+  let needsIntervention = 0
 
   for (const task of tasks) {
     if (isSmokeTestTask(task)) continue
     if (task.status === "ESCALATED") escalated += 1
     if (task.status === "FAILED") failed += 1
-    if (getDevinAlertForTask(task.status, task.devin_status, task.devin_status_detail)) {
-      needsHuman += 1
+    if (hasExplicitBlocker(task) && !TERMINAL_TASK_STATUSES.includes(task.status)) {
+      needsIntervention += 1
     }
   }
 
-  return { escalated, failed, needsHuman }
+  return { escalated, failed, needsIntervention }
 }
 
 export function formatPrState(prState: string | null | undefined): string | null {
@@ -159,11 +261,8 @@ export function extractPrNumber(prUrl: string): string | null {
 
 export const terminalTaskStatuses = TERMINAL_TASK_STATUSES
 
-export function getRawDevinStateSnapshotNote(taskStatus: TaskStatus): string | null {
-  if (!TERMINAL_TASK_STATUSES.includes(taskStatus)) {
-    return null
-  }
-  return "Session snapshot (last sync before or at terminal state)"
+export function getRawDevinStateSnapshotNote(): string {
+  return "Latest state persisted by the orchestrator poller"
 }
 
 export function getRawDevinStateClarification(
@@ -196,50 +295,47 @@ export function formatAcuDisplay(
   return `${acuUsed.toFixed(1)} ACU · Reported`
 }
 
-export function formatVerifiedAcuTotal(verifiedTotalAcu: number): string {
-  if (verifiedTotalAcu <= 0) {
-    return "No API usage available"
+export function formatDevinUsageKpi(
+  verifiedTotalAcu: number,
+  consumptionApiAvailable: boolean | null = null,
+): string {
+  if (verifiedTotalAcu > 0) {
+    return `${verifiedTotalAcu.toFixed(1)} ACU`
   }
-  return verifiedTotalAcu.toFixed(1)
+  if (consumptionApiAvailable === false) {
+    return "Not reported"
+  }
+  return "No verified usage"
 }
 
-/**
- * A zero total is expected rather than exceptional here: self-serve orgs are
- * billed in on-demand USD and only Enterprise plans report ACU over the API,
- * so the consumption endpoints return an empty ledger with a 200.
- */
+export function getDevinUsageNote(
+  verifiedTotalAcu: number,
+  consumptionApiAvailable: boolean | null,
+): string {
+  if (verifiedTotalAcu > 0) {
+    return "Verified"
+  }
+  if (consumptionApiAvailable === false) {
+    return "Consumption API unavailable / not reported"
+  }
+  return "Enterprise ACU reporting unavailable (self-serve/on-demand)"
+}
+
+/** @deprecated Use formatDevinUsageKpi */
+export function formatVerifiedAcuTotal(
+  verifiedTotalAcu: number,
+  consumptionApiAvailable: boolean | null = null,
+): string {
+  return formatDevinUsageKpi(verifiedTotalAcu, consumptionApiAvailable)
+}
+
+/** @deprecated Use getDevinUsageNote */
 export function getVerifiedAcuNote(
   verifiedTotalAcu: number,
   consumptionApiAvailable: boolean | null,
 ): string {
-  if (consumptionApiAvailable === false) {
-    return "Consumption API unavailable"
+  if (consumptionApiAvailable === false && verifiedTotalAcu <= 0) {
+    return "Consumption API unavailable / not reported"
   }
-  if (verifiedTotalAcu <= 0) {
-    return "Enterprise ACU reporting unavailable"
-  }
-  return "Sum of consumption-verified task ACU only"
-}
-
-export function parseStructuredResult(
-  structuredResultJson: string | null | undefined,
-): {
-  tests_performed: { command: string; result: string }[]
-  residual_risks: string[]
-} {
-  if (!structuredResultJson) {
-    return { tests_performed: [], residual_risks: [] }
-  }
-  try {
-    const parsed = JSON.parse(structuredResultJson) as {
-      tests_performed?: { command: string; result: string }[]
-      residual_risks?: string[]
-    }
-    return {
-      tests_performed: parsed.tests_performed ?? [],
-      residual_risks: parsed.residual_risks ?? [],
-    }
-  } catch {
-    return { tests_performed: [], residual_risks: [] }
-  }
+  return getDevinUsageNote(verifiedTotalAcu, consumptionApiAvailable)
 }

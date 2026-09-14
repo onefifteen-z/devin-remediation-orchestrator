@@ -9,6 +9,8 @@ export function isSmokeTestTask(task: Task): boolean {
   return task.task_kind === "smoke_test" || task.issue_type.toLowerCase() === "dummy"
 }
 
+const ORCHESTRATION_LABELS = new Set(["devin-remediate", "devin-scheduled"])
+
 /** Labels arrive as a JSON array in a text column, matching devin_tags. */
 export function parseIssueLabels(issueLabels: string | null | undefined): string[] {
   if (!issueLabels) return []
@@ -19,6 +21,16 @@ export function parseIssueLabels(issueLabels: string | null | undefined): string
   } catch {
     return []
   }
+}
+
+/** Domain classification labels for the main table row (excludes orchestration labels). */
+export function getDisplayIssueLabels(
+  issueLabels: string | null | undefined,
+  limit = 3,
+): string[] {
+  return parseIssueLabels(issueLabels)
+    .filter((label) => !ORCHESTRATION_LABELS.has(label.toLowerCase()))
+    .slice(0, limit)
 }
 
 export function buildTaskListQuery(params: TaskListParams): string {

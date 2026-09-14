@@ -9,9 +9,17 @@ export type TaskStatus =
   | "FAILED"
   | "ESCALATED"
 
+export type TestCategory =
+  | "pre_fix_reproduction"
+  | "post_fix_validation"
+  | "regression_test"
+  | "general_test"
+  | "ci_validation"
+
 export interface TestPerformed {
   command: string
   result: "passed" | "failed" | "skipped" | "not_run"
+  category?: TestCategory | null
 }
 
 export interface StructuredResultPayload {

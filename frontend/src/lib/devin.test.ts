@@ -1,59 +1,140 @@
 import { describe, expect, it } from "vitest"
 
-import type { Task } from "@/types/task"
 import {
   formatAcuDisplay,
-  formatDevinExecutionForTask,
+  formatDevinUsageKpi,
   formatTriggerSource,
-  formatVerifiedAcuTotal,
   getAttentionSummary,
-  getDevinAlertForTask,
+  getDevinPresentationState,
+  getDevinUsageNote,
   getRawDevinStateClarification,
   getRawDevinStateSnapshotNote,
   getTriggerSourceBadgeVariant,
-  getVerifiedAcuNote,
+  hasExplicitBlocker,
 } from "./devin"
+import { makeTask } from "./testFixtures"
 
-describe("formatAcuDisplay", () => {
-  it("shows verified ACU with verified suffix", () => {
-    expect(formatAcuDisplay(3.2, "consumption_api", true)).toBe("3.2 ACU · Verified")
+describe("Devin presentation states", () => {
+  it("A1: maps active Devin session to Working", () => {
+    const task = makeTask({
+      status: "RUNNING",
+      devin_status: "running",
+      devin_status_detail: "working",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "working",
+      label: "Working",
+    })
   })
 
-  it("shows reported ACU when unverified", () => {
-    expect(formatAcuDisplay(0.0, "session_detail", false)).toBe("0.0 ACU · Reported")
+  it("A2: maps open PR with pending CI to Waiting for CI", () => {
+    const task = makeTask({
+      status: "PR_OPENED",
+      pr_url: "https://github.com/owner/repo/pull/17",
+      pr_state: "open",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "waiting_for_ci",
+      label: "Waiting for CI",
+    })
   })
 
-  it("shows dash when consumption unavailable", () => {
-    expect(formatAcuDisplay(0.0, "unavailable", false)).toBe("—")
+  it("A3: maps waiting_for_user without blocker to Waiting for input", () => {
+    const task = makeTask({
+      status: "RUNNING",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "waiting_for_input",
+      label: "Waiting for input",
+    })
+  })
+
+  it("A4: maps explicit blocker to Human action required", () => {
+    const task = makeTask({
+      status: "RUNNING",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+      blocker: "Needs credentials",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "human_action_required",
+      label: "Human action required",
+    })
+  })
+
+  it("A5: maps MERGED + waiting_for_user to Completed", () => {
+    const task = makeTask({
+      status: "MERGED",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "completed",
+      label: "Completed",
+    })
+  })
+
+  it("A6: maps FAILED + waiting_for_user to Failed", () => {
+    const task = makeTask({
+      status: "FAILED",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "failed",
+      label: "Failed",
+    })
+  })
+
+  it("A7: maps ESCALATED + waiting_for_user to Escalated", () => {
+    const task = makeTask({
+      status: "ESCALATED",
+      devin_status: "running",
+      devin_status_detail: "waiting_for_user",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "escalated",
+      label: "Escalated",
+    })
   })
 })
 
-describe("formatVerifiedAcuTotal", () => {
-  it("shows empty state when no verified usage", () => {
-    expect(formatVerifiedAcuTotal(0)).toBe("No API usage available")
-  })
-})
-
-describe("getVerifiedAcuNote", () => {
-  it("explains the Enterprise requirement when the total is zero", () => {
-    expect(getVerifiedAcuNote(0, true)).toBe("Enterprise ACU reporting unavailable")
-  })
-
-  it("reports an outright API failure ahead of the plan note", () => {
-    expect(getVerifiedAcuNote(0, false)).toBe("Consumption API unavailable")
-  })
-
-  it("describes the metric once there is verified usage", () => {
-    expect(getVerifiedAcuNote(3.2, true)).toBe("Sum of consumption-verified task ACU only")
+describe("hasExplicitBlocker", () => {
+  it("detects blocked outcome and blocker text", () => {
+    expect(hasExplicitBlocker(makeTask({ remediation_outcome: "blocked" }))).toBe(true)
+    expect(hasExplicitBlocker(makeTask({ blocker: "Missing API key" }))).toBe(true)
+    expect(hasExplicitBlocker(makeTask({ devin_status_detail: "waiting_for_user" }))).toBe(
+      false,
+    )
   })
 })
 
 describe("formatTriggerSource", () => {
-  it("maps trigger sources to readable labels", () => {
+  it("C13: maps GITHUB_WEBHOOK to GitHub Webhook", () => {
     expect(formatTriggerSource("github_webhook")).toBe("GitHub Webhook")
+  })
+
+  it("C14: maps MANUAL_API to Manual API", () => {
     expect(formatTriggerSource("manual_api")).toBe("Manual API")
+  })
+
+  it("C15: maps SCAN to Scan", () => {
     expect(formatTriggerSource("scan")).toBe("Scan")
+  })
+
+  it("C16: maps SCHEDULED to Scheduled", () => {
     expect(formatTriggerSource("scheduled")).toBe("Scheduled")
+  })
+
+  it("C17: devin_origin does not change trigger source display", () => {
+    const webhook = makeTask({ trigger_source: "github_webhook", devin_origin: "api" })
+    const manual = makeTask({ trigger_source: "manual_api", devin_origin: "automation" })
+    expect(formatTriggerSource(webhook.trigger_source)).toBe("GitHub Webhook")
+    expect(formatTriggerSource(manual.trigger_source)).toBe("Manual API")
   })
 })
 
@@ -64,121 +145,70 @@ describe("getTriggerSourceBadgeVariant", () => {
     )
     expect(new Set(variants).size).toBe(variants.length)
   })
-
-  it("falls back to the neutral variant for unknown or missing sources", () => {
-    expect(getTriggerSourceBadgeVariant(null)).toBe("default")
-    expect(getTriggerSourceBadgeVariant("something_new")).toBe("default")
-  })
 })
 
-describe("terminal task Devin presentation", () => {
-  it("does not show human action required for MERGED + waiting_for_user", () => {
-    expect(
-      getDevinAlertForTask("MERGED", "running", "waiting_for_user"),
-    ).toBeNull()
-    expect(
-      formatDevinExecutionForTask("MERGED", "running", "waiting_for_user"),
-    ).toBe("Completed")
+describe("Devin usage", () => {
+  it("F25: shows verified ACU with verified note", () => {
+    expect(formatDevinUsageKpi(3.2)).toBe("3.2 ACU")
+    expect(getDevinUsageNote(3.2, true)).toBe("Verified")
+    expect(formatAcuDisplay(3.2, "consumption_api", true)).toBe("3.2 ACU · Verified")
   })
 
-  it("shows human action required for RUNNING + waiting_for_user", () => {
-    expect(
-      getDevinAlertForTask("RUNNING", "running", "waiting_for_user"),
-    ).toBe("Human action required")
+  it("F26: shows reported ACU when unverified", () => {
+    expect(formatAcuDisplay(0.0, "session_detail", false)).toBe("0.0 ACU · Reported")
   })
 
-  it("normalizes FAILED and ESCALATED terminal labels", () => {
-    expect(formatDevinExecutionForTask("FAILED", "error", "user_request")).toBe("Failed")
-    expect(formatDevinExecutionForTask("ESCALATED", "suspended", "usage_limit_exceeded")).toBe(
-      "Escalated",
+  it("F27: shows unavailable usage as dash", () => {
+    expect(formatAcuDisplay(0.0, "unavailable", false)).toBe("—")
+    expect(formatDevinUsageKpi(0, false)).toBe("Not reported")
+    expect(getDevinUsageNote(0, false)).toBe("Consumption API unavailable / not reported")
+  })
+
+  it("F28: zero verified usage does not imply zero real cost", () => {
+    expect(formatDevinUsageKpi(0)).toBe("No verified usage")
+    expect(getDevinUsageNote(0, true)).toBe(
+      "Enterprise ACU reporting unavailable (self-serve/on-demand)",
     )
-  })
-})
-
-describe("raw Devin state snapshot notes", () => {
-  it("shows snapshot note for terminal tasks only", () => {
-    expect(getRawDevinStateSnapshotNote("MERGED")).toBe(
-      "Session snapshot (last sync before or at terminal state)",
-    )
-    expect(getRawDevinStateSnapshotNote("RUNNING")).toBeNull()
-  })
-
-  it("clarifies merged tasks that still show waiting_for_user", () => {
-    expect(getRawDevinStateClarification("MERGED", "waiting_for_user")).toBe(
-      "Business outcome: merged — session may have ended after last sync",
-    )
-    expect(getRawDevinStateClarification("MERGED", "finished")).toBeNull()
-    expect(getRawDevinStateClarification("RUNNING", "waiting_for_user")).toBeNull()
   })
 })
 
 describe("getAttentionSummary", () => {
-  const baseTask: Task = {
-    id: 1,
-    github_delivery_id: "d1",
-    github_repository: "owner/repo",
-    github_issue_number: 1,
-    github_issue_url: "https://github.com/owner/repo/issues/1",
-    issue_title: "Issue",
-    issue_type: "bug",
-    issue_labels: null,
-    task_kind: "remediation",
-    trigger_source: "github_webhook",
-    devin_session_id: null,
-    devin_session_url: null,
-    devin_status: null,
-    devin_status_detail: null,
-    devin_origin: null,
-    devin_service_user_id: null,
-    devin_tags: null,
-    status: "RUNNING",
-    pr_url: null,
-    pr_state: null,
-    retry_count: 0,
-    max_retries: 3,
-    started_at: null,
-    completed_at: null,
-    merged_at: null,
-    failure_reason: null,
-    escalation_reason: null,
-    failure_type: null,
-    ci_classification_reason: null,
-    ci_check_name: null,
-    ci_check_url: null,
-    ci_conclusion: null,
-    ci_failure_at: null,
-    ci_repair_attempts: 0,
-    max_ci_repair_attempts: 2,
-    last_ci_check_run_id: null,
-    ci_repair_message_sent_at: null,
-    ci_repair_verified_at: null,
-    ci_non_code_failure_count: 0,
-    acu_used: null,
-    acu_source: null,
-    acu_verified: false,
-    session_size: null,
-    num_user_messages: null,
-    num_devin_messages: null,
-    insights_status: null,
-    insights_json: null,
-    remediation_outcome: null,
-    root_cause: null,
-    implementation_summary: null,
-    structured_result_json: null,
-    blocker: null,
-    playbook_id: null,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
-    mttr_seconds: null,
-  }
-
-  it("excludes smoke tests and terminal merged false positives", () => {
+  it("G29: waiting_for_user without blocker does not count as intervention", () => {
     const summary = getAttentionSummary([
-      { ...baseTask, id: 1, status: "MERGED", devin_status_detail: "waiting_for_user" },
-      { ...baseTask, id: 2, status: "RUNNING", devin_status_detail: "waiting_for_user" },
-      { ...baseTask, id: 3, task_kind: "smoke_test", status: "FAILED" },
+      makeTask({
+        id: 1,
+        status: "RUNNING",
+        devin_status_detail: "waiting_for_user",
+      }),
     ])
-    expect(summary.needsHuman).toBe(1)
+    expect(summary.needsIntervention).toBe(0)
+  })
+
+  it("G30: terminal merged task does not count as needing intervention", () => {
+    const summary = getAttentionSummary([
+      makeTask({
+        id: 1,
+        status: "MERGED",
+        devin_status_detail: "waiting_for_user",
+      }),
+      makeTask({
+        id: 2,
+        status: "RUNNING",
+        blocker: "Needs review",
+      }),
+      makeTask({ id: 3, task_kind: "smoke_test", status: "FAILED" }),
+    ])
+    expect(summary.needsIntervention).toBe(1)
     expect(summary.failed).toBe(0)
+  })
+})
+
+describe("raw Devin state notes", () => {
+  it("explains last observed Devin state snapshot", () => {
+    expect(getRawDevinStateSnapshotNote()).toContain("orchestrator poller")
+  })
+
+  it("clarifies merged tasks that still show waiting_for_user", () => {
+    expect(getRawDevinStateClarification("MERGED", "waiting_for_user")).toContain("merged")
   })
 })

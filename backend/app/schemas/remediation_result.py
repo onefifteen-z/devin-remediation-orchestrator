@@ -7,11 +7,19 @@ logger = logging.getLogger(__name__)
 
 Outcome = Literal["success", "blocked", "failed"]
 TestResult = Literal["passed", "failed", "skipped", "not_run"]
+TestCategory = Literal[
+    "pre_fix_reproduction",
+    "post_fix_validation",
+    "regression_test",
+    "general_test",
+    "ci_validation",
+]
 
 
 class TestPerformed(BaseModel):
     command: str
     result: TestResult
+    category: TestCategory | None = None
 
 
 class RemediationResult(BaseModel):
@@ -61,6 +69,16 @@ REMEDIATION_OUTPUT_JSON_SCHEMA: dict[str, Any] = {
                     "result": {
                         "type": "string",
                         "enum": ["passed", "failed", "skipped", "not_run"],
+                    },
+                    "category": {
+                        "type": "string",
+                        "enum": [
+                            "pre_fix_reproduction",
+                            "post_fix_validation",
+                            "regression_test",
+                            "general_test",
+                            "ci_validation",
+                        ],
                     },
                 },
             },

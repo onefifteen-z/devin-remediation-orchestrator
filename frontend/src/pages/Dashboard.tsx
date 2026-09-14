@@ -13,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatVerifiedAcuTotal, getAttentionSummary, getVerifiedAcuNote } from "@/lib/devin"
+import { formatDevinUsageKpi, getAttentionSummary, getDevinUsageNote } from "@/lib/devin"
 import { DEFAULT_PAGE_SIZE } from "@/lib/taskList"
 import { formatDuration, formatPercent } from "@/lib/utils"
 import type { TaskListParams } from "@/types/taskList"
@@ -96,7 +96,8 @@ export function Dashboard() {
   const tasks = tasksQuery.data?.items ?? []
   const taskTotal = tasksQuery.data?.total ?? 0
   const attention = getAttentionSummary(attentionQuery.data?.items ?? [])
-  const attentionCount = attention.escalated + attention.failed + attention.needsHuman
+  const attentionCount =
+    attention.escalated + attention.failed + attention.needsIntervention
 
   return (
     <div className="min-h-screen">
@@ -161,8 +162,11 @@ export function Dashboard() {
               {attention.escalated > 0 && `${attention.escalated} escalated`}
               {attention.escalated > 0 && attention.failed > 0 && " · "}
               {attention.failed > 0 && `${attention.failed} failed`}
-              {(attention.escalated > 0 || attention.failed > 0) && attention.needsHuman > 0 && " · "}
-              {attention.needsHuman > 0 && `${attention.needsHuman} waiting for human`}
+              {(attention.escalated > 0 || attention.failed > 0) &&
+                attention.needsIntervention > 0 &&
+                " · "}
+              {attention.needsIntervention > 0 &&
+                `${attention.needsIntervention} need intervention`}
             </AlertDescription>
           </Alert>
         )}
@@ -195,11 +199,16 @@ export function Dashboard() {
           <MetricCard
             title="Devin Usage"
             value={
-              metrics ? formatVerifiedAcuTotal(metrics.verified_total_acu) : "—"
+              metrics
+                ? formatDevinUsageKpi(
+                    metrics.verified_total_acu,
+                    metrics.consumption_api_available,
+                  )
+                : "—"
             }
             description={
               metrics
-                ? getVerifiedAcuNote(
+                ? getDevinUsageNote(
                     metrics.verified_total_acu,
                     metrics.consumption_api_available,
                   )
