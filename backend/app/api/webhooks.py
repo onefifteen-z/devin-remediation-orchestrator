@@ -114,7 +114,7 @@ def _handle_issue_event(
     event = RemediationEvent(**normalize_issue_event(delivery_id, payload))
     task, outcome = orchestrator.handle_webhook_event(event)
 
-    if outcome == "skipped":
+    if outcome != "created":
         orchestrator.webhook_repo.record(
             delivery_id,
             event_type="issues",

@@ -1,4 +1,4 @@
-import type { TaskStatus } from "@/types/task"
+import type { Task, TaskStatus } from "@/types/task"
 
 const STATUS_DETAIL_LABELS: Record<string, string> = {
   usage_limit_exceeded: "usage limit exceeded",
@@ -43,7 +43,7 @@ export function formatDevinExecution(
 export function formatTaskSource(
   devinOrigin: string | null | undefined,
 ): string {
-  if (!devinOrigin) return "GitHub"
+  if (!devinOrigin) return "—"
   return ORIGIN_LABELS[devinOrigin] ?? devinOrigin
 }
 
@@ -60,10 +60,18 @@ export function formatDevinExecutionForTask(
   devinStatusDetail: string | null | undefined,
 ): string {
   if (TERMINAL_TASK_STATUSES.includes(taskStatus)) {
-    if (taskStatus === "MERGED") return "completed"
-    if (taskStatus === "FAILED") return "failed"
-    return "escalated"
+    if (taskStatus === "MERGED") return "Completed"
+    if (taskStatus === "FAILED") return "Failed"
+    return "Escalated"
   }
+  return formatDevinExecution(devinStatus, devinStatusDetail)
+}
+
+export function formatRawDevinState(
+  devinStatus: string | null | undefined,
+  devinStatusDetail: string | null | undefined,
+): string | null {
+  if (!devinStatus) return null
   return formatDevinExecution(devinStatus, devinStatusDetail)
 }
 
@@ -98,6 +106,27 @@ export function getDevinAlertForTask(
   return getDevinAlert(devinStatus, devinStatusDetail)
 }
 
+export function getAttentionSummary(tasks: Task[]): {
+  escalated: number
+  failed: number
+  needsHuman: number
+} {
+  let escalated = 0
+  let failed = 0
+  let needsHuman = 0
+
+  for (const task of tasks) {
+    if (task.task_kind === "smoke_test") continue
+    if (task.status === "ESCALATED") escalated += 1
+    if (task.status === "FAILED") failed += 1
+    if (getDevinAlertForTask(task.status, task.devin_status, task.devin_status_detail)) {
+      needsHuman += 1
+    }
+  }
+
+  return { escalated, failed, needsHuman }
+}
+
 export function formatPrState(prState: string | null | undefined): string | null {
   if (!prState) return null
   return prState.charAt(0).toUpperCase() + prState.slice(1)
@@ -122,9 +151,16 @@ export function formatAcuDisplay(
     return "—"
   }
   if (acuVerified) {
-    return `${acuUsed.toFixed(1)} ACU`
+    return `${acuUsed.toFixed(1)} ACU · Verified`
   }
-  return `${acuUsed.toFixed(1)} ACU (reported)`
+  return `${acuUsed.toFixed(1)} ACU · Reported`
+}
+
+export function formatVerifiedAcuTotal(verifiedTotalAcu: number): string {
+  if (verifiedTotalAcu <= 0) {
+    return "No verified usage"
+  }
+  return verifiedTotalAcu.toFixed(1)
 }
 
 export function parseStructuredResult(

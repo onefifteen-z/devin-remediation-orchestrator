@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -107,20 +108,35 @@ class DevinClient:
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, Any] | None = None,
+        max_attempts: int = 3,
     ) -> dict[str, Any]:
         client = await self._get_client()
-        try:
-            response = await client.request(method, path, json=json, params=params)
-        except httpx.TimeoutException:
-            raise DevinAPIError("Devin API request timed out") from None
+        last_error: DevinAPIError | None = None
+        for attempt in range(max_attempts):
+            try:
+                response = await client.request(method, path, json=json, params=params)
+            except httpx.TimeoutException:
+                last_error = DevinAPIError("Devin API request timed out")
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(0.5 * (2**attempt))
+                    continue
+                raise last_error from None
 
-        if response.status_code >= 400:
-            self._handle_error(response)
+            if response.status_code in {429, 502, 503, 504} and attempt < max_attempts - 1:
+                await asyncio.sleep(0.5 * (2**attempt))
+                continue
 
-        try:
-            return response.json()
-        except ValueError:
-            raise DevinAPIError("Malformed Devin API response") from None
+            if response.status_code >= 400:
+                self._handle_error(response)
+
+            try:
+                return response.json()
+            except ValueError:
+                raise DevinAPIError("Malformed Devin API response") from None
+
+        if last_error:
+            raise last_error
+        raise DevinAPIError("Devin API request failed")
 
     async def create_session(
         self,

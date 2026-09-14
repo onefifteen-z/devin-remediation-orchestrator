@@ -43,6 +43,7 @@ class TaskRepository:
             github_issue_url=data.github_issue_url,
             issue_title=data.issue_title,
             issue_type=data.issue_type,
+            task_kind=data.task_kind,
             trigger_source=data.trigger_source,
             max_retries=data.max_retries,
             status=TaskStatus.RECEIVED,

@@ -36,6 +36,7 @@ async def test_configured_schedule_payload_is_correct():
         devin_org_id="org-test",
         devin_api_base_url="https://api.devin.ai/v3",
         devin_scheduled_enabled=True,
+        devin_automation_id="",
         orchestrator_public_url="https://orchestrator.example.com",
         devin_schedule_cron="0 9 * * 1-5",
         devin_remediation_playbook_id="playbook-001",
@@ -86,6 +87,8 @@ async def test_no_live_schedule_created_in_tests(monkeypatch):
 async def test_scheduled_intake_skips_duplicate_issue(client, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_SCAN_REPOSITORIES", "owner/superset")
+    monkeypatch.setenv("ORCHESTRATOR_PUBLIC_URL", "")
+    monkeypatch.setenv("DEVIN_SCHEDULED_ENABLED", "false")
     monkeypatch.setenv("SCHEDULED_INTAKE_TOKEN", "")
     get_settings.cache_clear()
 
@@ -105,6 +108,8 @@ async def test_scheduled_intake_skips_duplicate_issue(client, monkeypatch):
 async def test_scheduled_intake_uses_same_orchestration_primitives(client, monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
     monkeypatch.setenv("GITHUB_SCAN_REPOSITORIES", "owner/superset")
+    monkeypatch.setenv("ORCHESTRATOR_PUBLIC_URL", "")
+    monkeypatch.setenv("DEVIN_SCHEDULED_ENABLED", "false")
     monkeypatch.setenv("SCHEDULED_INTAKE_TOKEN", "")
     get_settings.cache_clear()
 
@@ -189,7 +194,7 @@ def test_existing_merged_remediation_not_recreated(db_session):
         issue_title="Existing merged",
     )
     _, outcome = orchestrator.ensure_task_for_issue(event)
-    assert outcome == "skipped"
+    assert outcome == "duplicate_issue_trigger"
 
 
 @pytest.mark.asyncio

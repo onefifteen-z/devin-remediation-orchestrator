@@ -30,6 +30,8 @@ def test_metrics_honest_when_no_merges(db_session):
         status=TaskStatus.RUNNING,
         devin_session_id="devin-1",
         acu_used=2.0,
+        acu_verified=True,
+        acu_source="consumption_api",
         pr_url="https://github.com/owner/superset/pull/1",
     )
     metrics = MetricsService(db_session).compute()
@@ -37,8 +39,8 @@ def test_metrics_honest_when_no_merges(db_session):
     assert metrics.merge_rate == 0.0
     assert metrics.median_mttr_seconds is None
     assert metrics.tasks_with_prs == 1
-    assert metrics.total_acu == 2.0
-    assert metrics.average_acu_per_task == 2.0
+    assert metrics.verified_total_acu == 2.0
+    assert metrics.average_verified_acu_per_task == 2.0
 
 
 def test_metrics_median_mttr_only_for_merged(db_session):

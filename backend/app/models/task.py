@@ -42,6 +42,11 @@ class TriggerSource(str, enum.Enum):
     SCHEDULED = "scheduled"
 
 
+class TaskKind(str, enum.Enum):
+    REMEDIATION = "remediation"
+    SMOKE_TEST = "smoke_test"
+
+
 class RemediationTask(Base):
     __tablename__ = "remediation_tasks"
     __table_args__ = (
@@ -57,6 +62,7 @@ class RemediationTask(Base):
 
     issue_title: Mapped[str] = mapped_column(String(512))
     issue_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    task_kind: Mapped[str] = mapped_column(String(32), default=TaskKind.REMEDIATION.value)
     trigger_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
     devin_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -12,6 +12,10 @@ os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
 os.environ.setdefault("DEVIN_LIVE_ENABLED", "false")
 os.environ.setdefault("DEVIN_SCHEDULED_ENABLED", "false")
 os.environ.setdefault("DEVIN_SESSION_POLL_INTERVAL_SECONDS", "0")
+os.environ.setdefault("DEVIN_REMEDIATION_PLAYBOOK_ID", "")
+os.environ.setdefault("ORCHESTRATOR_PUBLIC_URL", "")
+os.environ.setdefault("SCHEDULED_INTAKE_TOKEN", "")
+os.environ.setdefault("DEVIN_AUTOMATION_ID", "")
 
 from app.config import get_settings
 from sqlalchemy import text

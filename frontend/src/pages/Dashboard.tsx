@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
+import { formatVerifiedAcuTotal, getAttentionSummary } from "@/lib/devin"
 import { formatDuration, formatPercent } from "@/lib/utils"
 
 export function Dashboard() {
@@ -54,6 +55,8 @@ export function Dashboard() {
 
   const metrics = metricsQuery.data
   const tasks = tasksQuery.data?.items ?? []
+  const attention = getAttentionSummary(tasks)
+  const attentionCount = attention.escalated + attention.failed + attention.needsHuman
 
   return (
     <div className="min-h-screen">
@@ -111,41 +114,53 @@ export function Dashboard() {
           </Alert>
         )}
 
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
+        {attentionCount > 0 && (
+          <Alert>
+            <AlertTitle>Needs attention</AlertTitle>
+            <AlertDescription>
+              {attention.escalated > 0 && `${attention.escalated} escalated`}
+              {attention.escalated > 0 && attention.failed > 0 && " · "}
+              {attention.failed > 0 && `${attention.failed} failed`}
+              {(attention.escalated > 0 || attention.failed > 0) && attention.needsHuman > 0 && " · "}
+              {attention.needsHuman > 0 && `${attention.needsHuman} waiting for human`}
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
           <MetricCard
-            title="Active Tasks"
+            title="Active"
             value={metrics ? String(metrics.active_tasks) : "—"}
-            loading={isLoading}
-          />
-          <MetricCard
-            title="Tasks with PRs"
-            value={metrics ? String(metrics.tasks_with_prs) : "—"}
+            description="Production remediations in progress"
             loading={isLoading}
           />
           <MetricCard
             title="Merge Rate"
             value={metrics ? formatPercent(metrics.merge_rate) : "—"}
-            description="Production remediations merged / production tasks (excludes smoke tests)"
+            description="Merged / production remediation tasks (excludes smoke tests)"
             loading={isLoading}
           />
           <MetricCard
             title="Median MTTR"
             value={metrics ? formatDuration(metrics.median_mttr_seconds) : "—"}
+            description="merged_at − started_at for merged production tasks"
             loading={isLoading}
           />
           <MetricCard
-            title="Total ACU"
-            value={metrics ? metrics.total_acu.toFixed(1) : "—"}
-            description="All reported session values (may include unverified 0.0)"
+            title="CI Recovery"
+            value={metrics ? formatPercent(metrics.ci_recovery_rate) : "—"}
+            description="Verified CI recoveries / tasks with CI failures"
             loading={isLoading}
           />
           <MetricCard
             title="Verified ACU"
-            value={metrics ? metrics.verified_total_acu.toFixed(1) : "—"}
+            value={
+              metrics ? formatVerifiedAcuTotal(metrics.verified_total_acu) : "—"
+            }
             description={
               metrics?.consumption_api_available === false
                 ? "Consumption API unavailable"
-                : "Sum of consumption-verified task ACU"
+                : "Sum of consumption-verified task ACU only"
             }
             loading={isLoading}
           />
@@ -186,7 +201,7 @@ export function Dashboard() {
 
         {metrics && metrics.total_tasks > 0 && (
           <div className="grid gap-4 text-xs text-muted-foreground sm:grid-cols-4">
-            <div>Total tasks: {metrics.total_tasks}</div>
+            <div>Production tasks: {metrics.total_tasks}</div>
             <div>Active: {metrics.active_tasks}</div>
             <div>Failed: {metrics.failed_tasks}</div>
             <div>Escalated: {metrics.escalated_tasks}</div>

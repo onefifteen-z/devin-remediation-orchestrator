@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from app.models.task import TaskStatus, TriggerSource
+from app.models.task import TaskKind, TaskStatus, TriggerSource
 from app.repositories.tasks import TaskRepository
 from app.schemas.task import TaskCreate
 from app.services.metrics import MetricsService
@@ -15,10 +15,11 @@ def test_trigger_source_from_event_source_mapping():
     assert trigger_source_from_event_source("github") == TriggerSource.GITHUB_WEBHOOK.value
     assert trigger_source_from_event_source("api") == TriggerSource.MANUAL_API.value
     assert trigger_source_from_event_source("scan") == TriggerSource.SCAN.value
+    assert trigger_source_from_event_source("scheduled") == TriggerSource.SCHEDULED.value
 
 
-def test_is_smoke_test_task_detects_title():
-    task = SimpleNamespace(issue_title="Webhook integration smoke test")
+def test_is_smoke_test_task_uses_task_kind():
+    task = SimpleNamespace(task_kind="smoke_test", issue_title="Webhook integration smoke test")
     assert is_smoke_test_task(task) is True
     assert is_production_remediation(task) is False
 
@@ -32,6 +33,7 @@ def test_merge_rate_excludes_smoke_test_tasks(db_session):
             github_issue_number=1,
             github_issue_url="https://github.com/owner/superset/issues/1",
             issue_title="Real remediation",
+            task_kind=TaskKind.REMEDIATION.value,
             trigger_source=TriggerSource.GITHUB_WEBHOOK.value,
         )
     )
@@ -48,6 +50,7 @@ def test_merge_rate_excludes_smoke_test_tasks(db_session):
             github_issue_number=2,
             github_issue_url="https://github.com/owner/superset/issues/2",
             issue_title="Webhook integration smoke test",
+            task_kind=TaskKind.SMOKE_TEST.value,
             trigger_source=TriggerSource.GITHUB_WEBHOOK.value,
         )
     )

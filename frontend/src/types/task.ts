@@ -29,6 +29,7 @@ export interface Task {
   github_issue_url: string
   issue_title: string
   issue_type: string
+  task_kind: string
   trigger_source: string | null
   devin_session_id: string | null
   devin_session_url: string | null

@@ -26,6 +26,7 @@ class TaskCreate(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str = "unknown"
+    task_kind: str = "remediation"
     trigger_source: str = "github_webhook"
     max_retries: int = 3
 
@@ -40,6 +41,7 @@ class TaskResponse(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str
+    task_kind: str = "remediation"
     trigger_source: str | None = None
     devin_session_id: str | None
     devin_session_url: str | None
@@ -87,13 +89,17 @@ class TaskResponse(BaseModel):
 
     mttr_seconds: float | None = Field(
         default=None,
-        description="Time from started_at to merged_at for merged tasks only.",
+        description="Time from started_at to merged_at for merged production remediations only.",
     )
 
     @classmethod
     def from_orm_task(cls, task, max_ci_repair_attempts: int = 2) -> "TaskResponse":
         mttr = None
-        if task.merged_at and task.started_at:
+        if (
+            task.merged_at
+            and task.started_at
+            and (task.task_kind or "remediation") == "remediation"
+        ):
             mttr = (task.merged_at - task.started_at).total_seconds()
         return cls(
             id=task.id,
@@ -103,6 +109,7 @@ class TaskResponse(BaseModel):
             github_issue_url=task.github_issue_url,
             issue_title=task.issue_title,
             issue_type=task.issue_type,
+            task_kind=task.task_kind,
             trigger_source=task.trigger_source,
             devin_session_id=task.devin_session_id,
             devin_session_url=task.devin_session_url,

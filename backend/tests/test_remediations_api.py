@@ -50,7 +50,7 @@ def test_create_remediation_duplicate_issue(client, remediation_payload, db_sess
 
     assert response.status_code == 200
     data = response.json()
-    assert data["outcome"] == "skipped"
+    assert data["outcome"] == "duplicate_issue_trigger"
 
 
 @pytest.mark.asyncio
