@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge"
-import { formatCiRepairLine } from "@/lib/ci"
+import { formatCiFailureDetail, formatCiRepairLine, getValidationLabel } from "@/lib/ci"
 import {
   formatAcuDisplay,
   formatRawDevinState,
   formatTaskSource,
+  formatWorkflowLabel,
   getRawDevinStateClarification,
   getRawDevinStateSnapshotNote,
 } from "@/lib/devin"
@@ -18,15 +19,16 @@ import {
   parseSessionInsights,
 } from "@/lib/sessionInsights"
 import {
+  buildTestsPerformedRows,
   displayValue,
   formatOutcomeLabel,
-  formatTestResultLabel,
   getOutcomeBadgeVariant,
-  getTestResultBadgeVariant,
+  getRemediationResultTitle,
   hasOperationalMetadata,
   hasRemediationResult,
   parseRemediationResult,
 } from "@/lib/remediationResult"
+import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
 
 interface RemediationResultPanelProps {
@@ -58,10 +60,48 @@ function DetailField({
   )
 }
 
+function ResultSummaryStrip({ task }: { task: Task }) {
+  const result = parseRemediationResult(task)
+  const outcomeLabel = formatOutcomeLabel(result.outcome)
+  const resultTitle = getRemediationResultTitle(task)
+
+  if (!outcomeLabel && !task.pr_url) {
+    return null
+  }
+
+  return (
+    <section className="space-y-2 rounded-md border border-border/60 bg-background/40 p-3">
+      <div className="grid gap-3 text-xs sm:grid-cols-3">
+        <div>
+          <p className="font-medium text-foreground">{resultTitle}</p>
+          <div className="mt-1 flex items-center gap-2">
+            {outcomeLabel ? (
+              <Badge variant={getOutcomeBadgeVariant(result.outcome)} className="text-[10px]">
+                {outcomeLabel}
+              </Badge>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <p className="font-medium text-foreground">Validation</p>
+          <p className="mt-1 text-muted-foreground">{getValidationLabel(task)}</p>
+        </div>
+        <div>
+          <p className="font-medium text-foreground">Workflow</p>
+          <p className="mt-1 text-muted-foreground">{formatWorkflowLabel(task.status)}</p>
+        </div>
+      </div>
+    </section>
+  )
+}
+
 function RemediationResultSection({ task }: { task: Task }) {
   const result = parseRemediationResult(task)
+  const testRows = buildTestsPerformedRows(task)
 
-  if (!hasRemediationResult(task)) {
+  if (!hasRemediationResult(task) && testRows.length === 0) {
     return (
       <section className="space-y-2">
         <SectionTitle>Remediation Result</SectionTitle>
@@ -84,27 +124,30 @@ function RemediationResultSection({ task }: { task: Task }) {
       </div>
 
       <div className="grid gap-3 text-xs sm:grid-cols-2">
+        <DetailField label="Outcome" value={outcomeLabel} />
         <DetailField label="Root Cause" value={result.root_cause} />
-        <DetailField label="Implementation Summary" value={result.implementation_summary} />
+        <DetailField label="Implementation Summary" value={result.implementation_summary} className="sm:col-span-2" />
         <DetailField label="Blocker" value={result.blocker} className="sm:col-span-2" />
 
         <div className="sm:col-span-2">
           <p className="font-medium text-foreground">Tests Performed</p>
-          {result.tests_performed.length > 0 ? (
+          {testRows.length > 0 ? (
             <div className="mt-1.5 space-y-1.5">
-              {result.tests_performed.map((test, index) => (
+              {testRows.map((row) => (
                 <div
-                  key={`${test.command}-${test.result}-${index}`}
-                  className="flex items-center justify-between gap-3 rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5"
+                  key={row.key}
+                  className="flex items-start justify-between gap-3 rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5"
                 >
-                  <code className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
-                    {test.command}
-                  </code>
-                  <Badge
-                    variant={getTestResultBadgeVariant(test.result)}
-                    className="shrink-0 text-[10px]"
-                  >
-                    {formatTestResultLabel(test.result)}
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-medium text-foreground">{row.label}</p>
+                    {row.command && (
+                      <code className="mt-0.5 block break-all text-[10px] text-muted-foreground">
+                        {row.command}
+                      </code>
+                    )}
+                  </div>
+                  <Badge variant={row.variant} className="shrink-0 text-[10px]">
+                    {row.statusText}
                   </Badge>
                 </div>
               ))}
@@ -255,6 +298,7 @@ function OperationalMetadataSection({ task }: { task: Task }) {
     task.ci_repair_verified_at,
     task.ci_classification_reason,
   )
+  const ciFailureLines = formatCiFailureDetail(task)
 
   if (!hasOperationalMetadata(task) && !rawDevin && !ciLine) {
     return null
@@ -287,7 +331,7 @@ function OperationalMetadataSection({ task }: { task: Task }) {
           value={formatAcuDisplay(task.acu_used, task.acu_source, task.acu_verified)}
         />
         <DetailField label="Playbook" value={task.playbook_id} />
-        <DetailField label="Tags" value={task.devin_tags} />
+        <DetailField label="Devin Tags" value={task.devin_tags} />
         <DetailField
           label="Devin Origin"
           value={task.devin_origin ? formatTaskSource(task.devin_origin) : null}
@@ -295,12 +339,10 @@ function OperationalMetadataSection({ task }: { task: Task }) {
 
         {rawDevin && (
           <div className="sm:col-span-2">
-            <p className="font-medium text-foreground">Raw Devin State</p>
-            {getRawDevinStateSnapshotNote(task.status) && (
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {getRawDevinStateSnapshotNote(task.status)}
-              </p>
-            )}
+            <p className="font-medium text-foreground">Last observed Devin state</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {getRawDevinStateSnapshotNote()}
+            </p>
             <p className="mt-0.5 font-mono text-muted-foreground">{rawDevin}</p>
             {getRawDevinStateClarification(task.status, task.devin_status_detail) && (
               <p className="mt-1 text-[11px] text-muted-foreground">
@@ -310,10 +352,17 @@ function OperationalMetadataSection({ task }: { task: Task }) {
           </div>
         )}
 
-        {ciLine && (
+        {task.devin_session_id && (
+          <DetailField label="Last synced" value={formatDateTime(task.updated_at)} />
+        )}
+
+        {(ciLine || ciFailureLines.length > 0) && (
           <div className="sm:col-span-2">
             <p className="font-medium text-foreground">CI</p>
-            <p className="mt-0.5 text-muted-foreground">{ciLine}</p>
+            {ciLine && <p className="mt-0.5 text-muted-foreground">{ciLine}</p>}
+            {ciFailureLines.map((line) => (
+              <p key={line} className="mt-0.5 break-all text-muted-foreground">{line}</p>
+            ))}
           </div>
         )}
 
@@ -331,6 +380,7 @@ function OperationalMetadataSection({ task }: { task: Task }) {
 export function RemediationResultPanel({ task }: RemediationResultPanelProps) {
   return (
     <div className="space-y-4">
+      <ResultSummaryStrip task={task} />
       <RemediationResultSection task={task} />
       <SessionInsightsSection task={task} />
       <OperationalMetadataSection task={task} />

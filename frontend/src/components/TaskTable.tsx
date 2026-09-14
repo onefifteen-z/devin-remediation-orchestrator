@@ -11,18 +11,21 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { RemediationResultPanel } from "@/components/RemediationResultPanel"
-import { formatCiRepairLine } from "@/lib/ci"
+import {
+  formatCiFailureDetail,
+  formatCiSummaryLabel,
+  getCiSummaryState,
+} from "@/lib/ci"
 import {
   extractPrNumber,
-  formatDevinExecutionForTask,
   formatPrState,
   formatTriggerSource,
-  getDevinAlertForTask,
+  getDevinPresentationState,
   getTriggerSourceBadgeVariant,
   terminalTaskStatuses,
 } from "@/lib/devin"
 import { formatMessageTotal, formatSessionSize } from "@/lib/sessionInsights"
-import { getNextSortParams, isSmokeTestTask, parseIssueLabels } from "@/lib/taskList"
+import { getDisplayIssueLabels, getNextSortParams, isSmokeTestTask } from "@/lib/taskList"
 import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
 import type { TaskListParams, TaskSortField } from "@/types/taskList"
@@ -143,28 +146,16 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
       </TableHeader>
       <TableBody>
         {tasks.map((task) => {
-          const devinAlert = getDevinAlertForTask(
-            task.status,
-            task.devin_status,
-            task.devin_status_detail,
-          )
+          const devinPresentation = getDevinPresentationState(task)
           const prNumber = task.pr_url ? extractPrNumber(task.pr_url) : null
           const prState = formatPrState(task.pr_state)
-          const ciLine = formatCiRepairLine(
-            task.ci_check_name,
-            task.ci_conclusion,
-            task.failure_type,
-            task.ci_repair_attempts,
-            task.max_ci_repair_attempts,
-            task.ci_repair_message_sent_at,
-            task.ci_repair_verified_at,
-            task.ci_classification_reason,
-          )
+          const ciSummary = formatCiSummaryLabel(getCiSummaryState(task))
+          const ciFailureLines = formatCiFailureDetail(task)
           const messageTotal = formatMessageTotal(
             task.num_user_messages,
             task.num_devin_messages,
           )
-          const issueLabels = parseIssueLabels(task.issue_labels)
+          const issueLabels = getDisplayIssueLabels(task.issue_labels)
           const isExpandable = terminalTaskStatuses.includes(task.status)
           const isExpanded = expandedTaskIds.has(task.id)
 
@@ -236,25 +227,17 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
                         href={task.devin_session_url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="font-mono text-xs text-blue-400 hover:underline"
+                        className="text-xs text-blue-400 hover:underline"
                       >
-                        {formatDevinExecutionForTask(
-                          task.status,
-                          task.devin_status,
-                          task.devin_status_detail,
-                        )}
+                        {devinPresentation.label}
                       </a>
                     ) : (
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {formatDevinExecutionForTask(
-                          task.status,
-                          task.devin_status,
-                          task.devin_status_detail,
-                        )}
+                      <span className="text-xs text-muted-foreground">
+                        {devinPresentation.label}
                       </span>
                     )}
-                    {devinAlert && (
-                      <p className="mt-0.5 text-xs text-amber-500">{devinAlert}</p>
+                    {devinPresentation.sublabel && (
+                      <p className="mt-0.5 text-xs text-amber-500">{devinPresentation.sublabel}</p>
                     )}
                   </div>
                 </TableCell>
@@ -272,12 +255,15 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
                       {prState && (
                         <p className="text-xs text-muted-foreground">{prState}</p>
                       )}
-                      {ciLine && (
-                        <p className="mt-0.5 text-xs text-muted-foreground">{ciLine}</p>
-                      )}
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        CI · {ciSummary}
+                      </p>
+                      {ciFailureLines.map((line) => (
+                        <p key={line} className="mt-0.5 break-all text-xs text-muted-foreground">
+                          {line}
+                        </p>
+                      ))}
                     </div>
-                  ) : ciLine ? (
-                    <p className="text-xs text-muted-foreground">{ciLine}</p>
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}

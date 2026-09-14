@@ -1,5 +1,6 @@
+import { getCiSummaryState } from "@/lib/ci"
 import type { Task } from "@/types/task"
-import type { TestPerformed } from "@/types/task"
+import type { TestCategory, TestPerformed } from "@/types/task"
 
 export type RemediationOutcome = "success" | "failed" | "blocked"
 
@@ -14,6 +15,22 @@ export interface ParsedRemediationResult {
   blocker: string | null
   tests_performed: TestPerformed[]
   residual_risks: string[]
+}
+
+export interface TestDisplayRow {
+  key: string
+  label: string
+  command: string | null
+  statusText: string
+  variant: TestResultBadgeVariant
+}
+
+const CATEGORY_LABELS: Record<TestCategory, string> = {
+  pre_fix_reproduction: "Pre-fix reproduction",
+  post_fix_validation: "Post-fix validation",
+  regression_test: "Regression test",
+  general_test: "General test",
+  ci_validation: "GitHub CI",
 }
 
 export function formatOutcomeLabel(outcome: string | null | undefined): string | null {
@@ -60,6 +77,98 @@ export function getTestResultBadgeVariant(result: string): TestResultBadgeVarian
 
 export function formatTestResultLabel(result: string): string {
   return result.replaceAll("_", " ").toUpperCase()
+}
+
+function truncateCommand(command: string, maxLength = 48): string {
+  if (command.length <= maxLength) return command
+  return `${command.slice(0, maxLength - 1)}…`
+}
+
+function formatTestStatusText(test: TestPerformed): { statusText: string; variant: TestResultBadgeVariant } {
+  const result = test.result.toLowerCase()
+  const category = test.category
+
+  if (category === "pre_fix_reproduction" && result === "failed") {
+    return { statusText: "Expected failure", variant: "success" }
+  }
+
+  switch (result) {
+    case "passed":
+      return { statusText: "Passed", variant: "success" }
+    case "failed":
+      return { statusText: "Failed", variant: "destructive" }
+    case "skipped":
+      return { statusText: "Skipped", variant: "warning" }
+    case "not_run":
+      return { statusText: "Not run", variant: "default" }
+    default:
+      return { statusText: formatTestResultLabel(test.result), variant: "default" }
+  }
+}
+
+export function formatTestDisplay(test: TestPerformed, index: number): TestDisplayRow {
+  const { statusText, variant } = formatTestStatusText(test)
+  const label =
+    test.category && test.category in CATEGORY_LABELS
+      ? CATEGORY_LABELS[test.category]
+      : truncateCommand(test.command)
+
+  return {
+    key: `${test.command}-${test.result}-${index}`,
+    label,
+    command: test.category ? test.command : null,
+    statusText,
+    variant,
+  }
+}
+
+function formatCiValidationRow(task: Task): TestDisplayRow {
+  const ciState = getCiSummaryState(task)
+  switch (ciState) {
+    case "running":
+      return {
+        key: "ci-validation",
+        label: CATEGORY_LABELS.ci_validation,
+        command: null,
+        statusText: "Waiting",
+        variant: "default",
+      }
+    case "passed":
+      return {
+        key: "ci-validation",
+        label: CATEGORY_LABELS.ci_validation,
+        command: null,
+        statusText: "Passed",
+        variant: "success",
+      }
+    case "failed":
+      return {
+        key: "ci-validation",
+        label: CATEGORY_LABELS.ci_validation,
+        command: null,
+        statusText: "Failed",
+        variant: "destructive",
+      }
+    default:
+      return {
+        key: "ci-validation",
+        label: CATEGORY_LABELS.ci_validation,
+        command: null,
+        statusText: "Not run",
+        variant: "default",
+      }
+  }
+}
+
+export function buildTestsPerformedRows(task: Task): TestDisplayRow[] {
+  const result = parseRemediationResult(task)
+  const rows = result.tests_performed.map((test, index) => formatTestDisplay(test, index))
+
+  if (task.pr_url || task.ci_failure_at || task.status === "MERGED") {
+    rows.push(formatCiValidationRow(task))
+  }
+
+  return rows
 }
 
 export function parseRemediationResult(task: Task): ParsedRemediationResult {
@@ -162,4 +271,8 @@ export function hasOperationalMetadata(task: Task): boolean {
 
 export function displayValue(value: string | null | undefined): string {
   return value?.trim() ? value : "None"
+}
+
+export function getRemediationResultTitle(task: Task): string {
+  return task.status === "MERGED" ? "Remediation Result" : "Devin Result"
 }

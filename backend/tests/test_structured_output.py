@@ -53,6 +53,29 @@ def test_parse_legacy_status_field():
     assert result.outcome == "failed"
 
 
+def test_parse_structured_output_with_optional_test_category():
+    result = parse_remediation_result(
+        {
+            "outcome": "success",
+            "tests_performed": [
+                {
+                    "command": "pytest -k legacy (with fix stashed)",
+                    "result": "failed",
+                    "category": "pre_fix_reproduction",
+                },
+                {
+                    "command": "pytest",
+                    "result": "passed",
+                    "category": "post_fix_validation",
+                },
+            ],
+        }
+    )
+    assert result is not None
+    assert result.tests_performed[0].category == "pre_fix_reproduction"
+    assert result.tests_performed[1].category == "post_fix_validation"
+
+
 def test_remediation_result_persists_fields():
     result = parse_remediation_result(
         {

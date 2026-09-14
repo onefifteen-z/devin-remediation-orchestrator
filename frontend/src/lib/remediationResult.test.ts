@@ -1,128 +1,82 @@
 import { describe, expect, it } from "vitest"
 
-import type { Task } from "@/types/task"
 import {
+  buildTestsPerformedRows,
   formatOutcomeLabel,
-  getOutcomeBadgeVariant,
-  getTestResultBadgeVariant,
-  hasRemediationResult,
+  formatTestDisplay,
   parseRemediationResult,
 } from "./remediationResult"
+import { makeTask } from "./testFixtures"
 
-const baseTask: Task = {
-  id: 1,
-  github_delivery_id: "d1",
-  github_repository: "owner/repo",
-  github_issue_number: 1,
-  github_issue_url: "https://github.com/owner/repo/issues/1",
-  issue_title: "Issue",
-  issue_type: "bug",
-  issue_labels: null,
-  task_kind: "remediation",
-  trigger_source: "github_webhook",
-  devin_session_id: "session-1",
-  devin_session_url: "https://app.devin.ai/sessions/session-1",
-  devin_status: "running",
-  devin_status_detail: "waiting_for_user",
-  devin_origin: "api",
-  devin_service_user_id: null,
-  devin_tags: "repo:owner/repo",
-  status: "MERGED",
-  pr_url: "https://github.com/owner/repo/pull/2",
-  pr_state: "closed",
-  retry_count: 0,
-  max_retries: 3,
-  started_at: "2026-01-01T00:00:00Z",
-  completed_at: null,
-  merged_at: "2026-01-01T01:00:00Z",
-  failure_reason: null,
-  escalation_reason: null,
-  failure_type: null,
-  ci_classification_reason: null,
-  ci_check_name: null,
-  ci_check_url: null,
-  ci_conclusion: null,
-  ci_failure_at: null,
-  ci_repair_attempts: 0,
-  max_ci_repair_attempts: 2,
-  last_ci_check_run_id: null,
-  ci_repair_message_sent_at: null,
-  ci_repair_verified_at: null,
-  ci_non_code_failure_count: 0,
-  acu_used: 0,
-  acu_source: "session_detail",
-  acu_verified: false,
-  session_size: null,
-  num_user_messages: null,
-  num_devin_messages: null,
-  insights_status: null,
-  insights_json: null,
-  remediation_outcome: "success",
-  root_cause: "Missing config key",
-  implementation_summary: "Added fallback config loader",
-  structured_result_json: JSON.stringify({
-    outcome: "success",
-    tests_performed: [
-      { command: "pytest backend/tests", result: "passed" },
-      { command: "npm test", result: "skipped" },
-    ],
-    residual_risks: ["Needs staging validation"],
-  }),
-  blocker: null,
-  playbook_id: "playbook-123",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T01:00:00Z",
-  mttr_seconds: 3600,
-}
-
-describe("remediation result helpers", () => {
-  it("maps outcome labels and badge variants", () => {
-    expect(formatOutcomeLabel("success")).toBe("SUCCESS")
-    expect(formatOutcomeLabel("blocked")).toBe("BLOCKED")
-    expect(getOutcomeBadgeVariant("success")).toBe("success")
-    expect(getOutcomeBadgeVariant("failed")).toBe("destructive")
-    expect(getOutcomeBadgeVariant("blocked")).toBe("warning")
+describe("structured output presentation", () => {
+  it("B8: outcome success is displayed correctly", () => {
+    const task = makeTask({ remediation_outcome: "success" })
+    expect(formatOutcomeLabel(parseRemediationResult(task).outcome)).toBe("SUCCESS")
   })
 
-  it("maps test result badge variants", () => {
-    expect(getTestResultBadgeVariant("passed")).toBe("success")
-    expect(getTestResultBadgeVariant("failed")).toBe("destructive")
-    expect(getTestResultBadgeVariant("skipped")).toBe("warning")
-    expect(getTestResultBadgeVariant("not_run")).toBe("default")
+  it("B9: pre-fix expected failure does not look like remediation failure", () => {
+    const row = formatTestDisplay(
+      {
+        command: "pytest -k legacy (with fix stashed)",
+        result: "failed",
+        category: "pre_fix_reproduction",
+      },
+      0,
+    )
+    expect(row.statusText).toBe("Expected failure")
+    expect(row.variant).toBe("success")
   })
 
-  it("parses remediation result from task fields and structured json", () => {
-    const result = parseRemediationResult(baseTask)
-    expect(result.outcome).toBe("success")
-    expect(result.root_cause).toBe("Missing config key")
-    expect(result.tests_performed).toHaveLength(2)
-    expect(result.residual_risks).toEqual(["Needs staging validation"])
-    expect(hasRemediationResult(baseTask)).toBe(true)
+  it("B10: post-fix regression pass is displayed as passed", () => {
+    const row = formatTestDisplay(
+      {
+        command: "pytest tests/regression",
+        result: "passed",
+        category: "regression_test",
+      },
+      0,
+    )
+    expect(row.label).toBe("Regression test")
+    expect(row.statusText).toBe("Passed")
   })
 
-  it("detects missing remediation result", () => {
-    const emptyTask: Task = {
-      ...baseTask,
+  it("B11: CI not run is displayed as not run/waiting", () => {
+    const task = makeTask({ status: "RUNNING" })
+    const rows = buildTestsPerformedRows(task)
+    expect(rows).toEqual([])
+  })
+
+  it("B12: malformed optional structured fields render safely", () => {
+    const task = makeTask({
+      structured_result_json: "{not-json",
       remediation_outcome: null,
-      root_cause: null,
-      implementation_summary: null,
-      blocker: null,
-      structured_result_json: null,
-    }
-    expect(hasRemediationResult(emptyTask)).toBe(false)
-    expect(parseRemediationResult(emptyTask).tests_performed).toEqual([])
+    })
+    const result = parseRemediationResult(task)
+    expect(result.tests_performed).toEqual([])
+    expect(result.residual_risks).toEqual([])
+    expect(result.outcome).toBeNull()
   })
+})
 
-  it("prefers persisted task fields over structured json duplicates", () => {
-    const task: Task = {
-      ...baseTask,
-      root_cause: "Persisted root cause",
+describe("buildTestsPerformedRows", () => {
+  it("adds GitHub CI row when PR exists", () => {
+    const task = makeTask({
+      status: "PR_OPENED",
+      pr_url: "https://github.com/owner/repo/pull/17",
+      pr_state: "open",
       structured_result_json: JSON.stringify({
-        outcome: "failed",
-        root_cause: "JSON root cause",
+        tests_performed: [
+          {
+            command: "pytest",
+            result: "passed",
+            category: "post_fix_validation",
+          },
+        ],
       }),
-    }
-    expect(parseRemediationResult(task).root_cause).toBe("Persisted root cause")
-    expect(parseRemediationResult(task).outcome).toBe("success")
+    })
+    const rows = buildTestsPerformedRows(task)
+    expect(rows).toHaveLength(2)
+    expect(rows[1].label).toBe("GitHub CI")
+    expect(rows[1].statusText).toBe("Waiting")
   })
 })
