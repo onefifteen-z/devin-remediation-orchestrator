@@ -10,6 +10,8 @@ import {
   getDevinAlertForTask,
   getRawDevinStateClarification,
   getRawDevinStateSnapshotNote,
+  getTriggerSourceBadgeVariant,
+  getVerifiedAcuNote,
 } from "./devin"
 
 describe("formatAcuDisplay", () => {
@@ -28,7 +30,21 @@ describe("formatAcuDisplay", () => {
 
 describe("formatVerifiedAcuTotal", () => {
   it("shows empty state when no verified usage", () => {
-    expect(formatVerifiedAcuTotal(0)).toBe("No verified usage")
+    expect(formatVerifiedAcuTotal(0)).toBe("No API usage available")
+  })
+})
+
+describe("getVerifiedAcuNote", () => {
+  it("explains the Enterprise requirement when the total is zero", () => {
+    expect(getVerifiedAcuNote(0, true)).toBe("Enterprise ACU reporting unavailable")
+  })
+
+  it("reports an outright API failure ahead of the plan note", () => {
+    expect(getVerifiedAcuNote(0, false)).toBe("Consumption API unavailable")
+  })
+
+  it("describes the metric once there is verified usage", () => {
+    expect(getVerifiedAcuNote(3.2, true)).toBe("Sum of consumption-verified task ACU only")
   })
 })
 
@@ -38,6 +54,20 @@ describe("formatTriggerSource", () => {
     expect(formatTriggerSource("manual_api")).toBe("Manual API")
     expect(formatTriggerSource("scan")).toBe("Scan")
     expect(formatTriggerSource("scheduled")).toBe("Scheduled")
+  })
+})
+
+describe("getTriggerSourceBadgeVariant", () => {
+  it("gives each known source a distinct variant", () => {
+    const variants = ["github_webhook", "scheduled", "manual_api", "scan"].map(
+      getTriggerSourceBadgeVariant,
+    )
+    expect(new Set(variants).size).toBe(variants.length)
+  })
+
+  it("falls back to the neutral variant for unknown or missing sources", () => {
+    expect(getTriggerSourceBadgeVariant(null)).toBe("default")
+    expect(getTriggerSourceBadgeVariant("something_new")).toBe("default")
   })
 })
 
@@ -91,6 +121,7 @@ describe("getAttentionSummary", () => {
     github_issue_url: "https://github.com/owner/repo/issues/1",
     issue_title: "Issue",
     issue_type: "bug",
+    issue_labels: null,
     task_kind: "remediation",
     trigger_source: "github_webhook",
     devin_session_id: null,

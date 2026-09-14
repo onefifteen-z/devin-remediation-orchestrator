@@ -16,6 +16,7 @@ class RemediationEvent(BaseModel):
     issue_title: str
     issue_body: str | None = None
     issue_type: str = "unknown"
+    issue_labels: list[str] = Field(default_factory=list)
     action: str | None = None
 
 
@@ -26,6 +27,7 @@ class TaskCreate(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str = "unknown"
+    issue_labels: list[str] = Field(default_factory=list)
     task_kind: str = "remediation"
     trigger_source: str = "github_webhook"
     max_retries: int = 3
@@ -41,6 +43,7 @@ class TaskResponse(BaseModel):
     github_issue_url: str
     issue_title: str
     issue_type: str
+    issue_labels: str | None = None
     task_kind: str = "remediation"
     trigger_source: str | None = None
     devin_session_id: str | None
@@ -114,6 +117,7 @@ class TaskResponse(BaseModel):
             github_issue_url=task.github_issue_url,
             issue_title=task.issue_title,
             issue_type=task.issue_type,
+            issue_labels=task.issue_labels,
             task_kind=task.task_kind,
             trigger_source=task.trigger_source,
             devin_session_id=task.devin_session_id,

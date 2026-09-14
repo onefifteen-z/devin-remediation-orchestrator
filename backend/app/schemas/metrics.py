@@ -1,5 +1,7 @@
 from pydantic import BaseModel, Field
 
+from app.schemas.devin_metrics import OrgMetricsSnapshot
+
 
 class ThroughputPoint(BaseModel):
     date: str
@@ -70,11 +72,30 @@ class MetricsResponse(BaseModel):
     )
     consumption_api_available: bool | None = Field(
         default=None,
-        description="Whether Devin consumption API was available on last metrics probe.",
+        description=(
+            "Whether Devin consumption API was available on last metrics probe. "
+            "True only means the request succeeded: consumption reporting via the "
+            "API is available only for organizations on Enterprise plans, and "
+            "other plans return an empty ledger with a 200."
+        ),
     )
     devin_org_total_acus: float | None = Field(
         default=None,
-        description="Organization ACU total from Devin analytics when available.",
+        description=(
+            "Organization ACU total from Devin analytics when available. Stays 0 "
+            "on non-Enterprise plans regardless of actual usage."
+        ),
+    )
+    devin_org_metrics: OrgMetricsSnapshot | None = Field(
+        default=None,
+        description=(
+            "Devin org-wide metrics for the reporting window. Counts every org "
+            "session, so it is not comparable to the task-derived metrics above."
+        ),
+    )
+    org_metrics_window_days: int = Field(
+        default=30,
+        description="Length of the window used for devin_org_metrics.",
     )
     tasks_with_prs: int = 0
     failed_tasks: int = 0

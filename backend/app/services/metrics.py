@@ -12,6 +12,14 @@ from app.services.devin import DevinClient
 from app.services.devin_analytics import DevinAnalyticsService
 from app.services.task_classification import is_production_remediation
 
+ORG_METRICS_WINDOW_DAYS = 30
+
+
+def _pst_day_boundary(days_ago: int) -> int:
+    """Devin billing days start at midnight PST (08:00:00 UTC)."""
+    day = (datetime.now(UTC) - timedelta(days=days_ago)).date()
+    return int(datetime(day.year, day.month, day.day, 8, 0, 0, tzinfo=UTC).timestamp())
+
 
 class MetricsService:
     def __init__(self, db: Session):
@@ -115,6 +123,13 @@ class MetricsService:
             metrics.consumption_api_available = analytics.consumption_api_available
             if isinstance(result, ConsumptionResponse):
                 metrics.devin_org_total_acus = round(result.total_acus, 2)
+
+            metrics.org_metrics_window_days = ORG_METRICS_WINDOW_DAYS
+            metrics.devin_org_metrics = await analytics.get_org_metrics_snapshot(
+                time_after=_pst_day_boundary(ORG_METRICS_WINDOW_DAYS - 1),
+                # The next PST midnight, so today is covered in full.
+                time_before=_pst_day_boundary(-1),
+            )
         finally:
             await client.close()
         return metrics

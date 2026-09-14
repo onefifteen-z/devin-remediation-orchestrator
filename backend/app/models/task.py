@@ -62,6 +62,7 @@ class RemediationTask(Base):
 
     issue_title: Mapped[str] = mapped_column(String(512))
     issue_type: Mapped[str] = mapped_column(String(64), default="unknown")
+    issue_labels: Mapped[str | None] = mapped_column(Text, nullable=True)
     task_kind: Mapped[str] = mapped_column(String(32), default=TaskKind.REMEDIATION.value)
     trigger_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
 

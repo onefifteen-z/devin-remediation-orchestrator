@@ -22,7 +22,11 @@ from app.schemas.scan import ScanResult
 from app.schemas.task import RemediationEvent, TaskCreate, TaskResponse
 from app.services.devin import DevinAPIError, DevinClient
 from app.repositories.webhook_deliveries import WebhookDeliveryRepository
-from app.schemas.github_events import PullRequestEvent, extract_issue_type
+from app.schemas.github_events import (
+    PullRequestEvent,
+    extract_issue_labels,
+    extract_issue_type,
+)
 from app.services.github import GitHubClient
 from app.services.github_events import find_task_for_pr
 from app.schemas.devin_consumption import ConsumptionResponse
@@ -163,6 +167,7 @@ class RemediationOrchestrator:
                     github_issue_url=event.github_issue_url,
                     issue_title=event.issue_title,
                     issue_type=event.issue_type,
+                    issue_labels=event.issue_labels,
                     task_kind=task_kind_from_title(
                         event.issue_title, event.issue_type
                     ),
@@ -227,6 +232,7 @@ class RemediationOrchestrator:
                     github_issue_url=issue["html_url"],
                     issue_title=issue["title"],
                     issue_type=extract_issue_type(issue.get("labels", []), label),
+                    issue_labels=extract_issue_labels(issue.get("labels", []), label),
                 )
                 task, status = self.ensure_task_for_issue(event)
                 if status == "created":

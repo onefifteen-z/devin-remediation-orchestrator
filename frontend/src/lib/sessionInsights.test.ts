@@ -21,6 +21,7 @@ const baseTask: Task = {
   github_issue_url: "https://github.com/owner/repo/issues/1",
   issue_title: "Issue",
   issue_type: "bug",
+  issue_labels: null,
   task_kind: "remediation",
   trigger_source: "github_webhook",
   devin_session_id: "session-1",

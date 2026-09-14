@@ -3,6 +3,7 @@ import {
   buildTaskListQuery,
   getNextSortParams,
   isSmokeTestTask,
+  parseIssueLabels,
   totalPages,
 } from "@/lib/taskList"
 import type { Task } from "@/types/task"
@@ -15,6 +16,7 @@ const baseTask: Task = {
   github_issue_url: "https://github.com/owner/repo/issues/1",
   issue_title: "Bug",
   issue_type: "bug",
+  issue_labels: null,
   task_kind: "remediation",
   trigger_source: "github_webhook",
   devin_session_id: null,
@@ -70,6 +72,21 @@ describe("taskList helpers", () => {
     expect(isSmokeTestTask({ ...baseTask, task_kind: "smoke_test" })).toBe(true)
     expect(isSmokeTestTask({ ...baseTask, issue_type: "dummy" })).toBe(true)
     expect(isSmokeTestTask(baseTask)).toBe(false)
+  })
+
+  it("parses issue labels from the JSON text column", () => {
+    expect(parseIssueLabels('["helm", "infrastructure"]')).toEqual(["helm", "infrastructure"])
+  })
+
+  it("treats missing, malformed, and non-array label payloads as empty", () => {
+    expect(parseIssueLabels(null)).toEqual([])
+    expect(parseIssueLabels("")).toEqual([])
+    expect(parseIssueLabels("not json")).toEqual([])
+    expect(parseIssueLabels('{"name":"helm"}')).toEqual([])
+  })
+
+  it("drops non-string and empty label entries", () => {
+    expect(parseIssueLabels('["helm", 3, "", null, "backend"]')).toEqual(["helm", "backend"])
   })
 
   it("builds query string with smoke-test and pagination params", () => {

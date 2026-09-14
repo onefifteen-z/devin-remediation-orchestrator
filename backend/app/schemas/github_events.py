@@ -26,6 +26,17 @@ def extract_issue_type(labels: list[dict], remediate_label: str = REMEDIATE_LABE
     return "unknown"
 
 
+def extract_issue_labels(
+    labels: list[dict], remediate_label: str = REMEDIATE_LABEL
+) -> list[str]:
+    """All domain labels, excluding the trigger label the Source column covers."""
+    return [
+        name
+        for label in labels
+        if (name := label.get("name", "")) and name != remediate_label
+    ]
+
+
 def normalize_issue_event(delivery_id: str, payload: dict) -> dict:
     """Normalize a GitHub issues webhook payload into RemediationEvent fields."""
     issue = payload["issue"]
@@ -40,6 +51,7 @@ def normalize_issue_event(delivery_id: str, payload: dict) -> dict:
         "issue_title": issue.get("title", ""),
         "issue_body": issue.get("body"),
         "issue_type": extract_issue_type(labels),
+        "issue_labels": extract_issue_labels(labels),
         "action": payload.get("action"),
     }
 

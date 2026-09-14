@@ -55,6 +55,25 @@ export function formatTriggerSource(
   return TRIGGER_SOURCE_LABELS[triggerSource] ?? triggerSource.replaceAll("_", " ")
 }
 
+/**
+ * Distinct hues only so multiple sources are scannable in one pass; the
+ * variants carry no severity meaning.
+ */
+export function getTriggerSourceBadgeVariant(
+  triggerSource: string | null | undefined,
+): "default" | "info" | "success" | "warning" {
+  switch (triggerSource) {
+    case "github_webhook":
+      return "info"
+    case "scheduled":
+      return "success"
+    case "manual_api":
+      return "warning"
+    default:
+      return "default"
+  }
+}
+
 export function formatDevinExecutionForTask(
   taskStatus: TaskStatus,
   devinStatus: string | null | undefined,
@@ -179,9 +198,27 @@ export function formatAcuDisplay(
 
 export function formatVerifiedAcuTotal(verifiedTotalAcu: number): string {
   if (verifiedTotalAcu <= 0) {
-    return "No verified usage"
+    return "No API usage available"
   }
   return verifiedTotalAcu.toFixed(1)
+}
+
+/**
+ * A zero total is expected rather than exceptional here: self-serve orgs are
+ * billed in on-demand USD and only Enterprise plans report ACU over the API,
+ * so the consumption endpoints return an empty ledger with a 200.
+ */
+export function getVerifiedAcuNote(
+  verifiedTotalAcu: number,
+  consumptionApiAvailable: boolean | null,
+): string {
+  if (consumptionApiAvailable === false) {
+    return "Consumption API unavailable"
+  }
+  if (verifiedTotalAcu <= 0) {
+    return "Enterprise ACU reporting unavailable"
+  }
+  return "Sum of consumption-verified task ACU only"
 }
 
 export function parseStructuredResult(

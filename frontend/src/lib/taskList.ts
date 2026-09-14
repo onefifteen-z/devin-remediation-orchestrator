@@ -9,6 +9,18 @@ export function isSmokeTestTask(task: Task): boolean {
   return task.task_kind === "smoke_test" || task.issue_type.toLowerCase() === "dummy"
 }
 
+/** Labels arrive as a JSON array in a text column, matching devin_tags. */
+export function parseIssueLabels(issueLabels: string | null | undefined): string[] {
+  if (!issueLabels) return []
+  try {
+    const parsed = JSON.parse(issueLabels)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((label): label is string => typeof label === "string" && label !== "")
+  } catch {
+    return []
+  }
+}
+
 export function buildTaskListQuery(params: TaskListParams): string {
   const searchParams = new URLSearchParams()
   if (params.limit != null) searchParams.set("limit", String(params.limit))

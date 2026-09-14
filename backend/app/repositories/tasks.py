@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -67,6 +68,7 @@ class TaskRepository:
             github_issue_url=data.github_issue_url,
             issue_title=data.issue_title,
             issue_type=data.issue_type,
+            issue_labels=json.dumps(data.issue_labels) if data.issue_labels else None,
             task_kind=data.task_kind,
             trigger_source=data.trigger_source,
             max_retries=data.max_retries,

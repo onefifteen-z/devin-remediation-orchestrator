@@ -1,6 +1,7 @@
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react"
 import { Fragment, useState } from "react"
 import { StatusBadge } from "@/components/StatusBadge"
+import { Badge } from "@/components/ui/badge"
 import {
   Table,
   TableBody,
@@ -17,10 +18,11 @@ import {
   formatPrState,
   formatTriggerSource,
   getDevinAlertForTask,
+  getTriggerSourceBadgeVariant,
   terminalTaskStatuses,
 } from "@/lib/devin"
 import { formatMessageTotal, formatSessionSize } from "@/lib/sessionInsights"
-import { getNextSortParams, isSmokeTestTask } from "@/lib/taskList"
+import { getNextSortParams, isSmokeTestTask, parseIssueLabels } from "@/lib/taskList"
 import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
 import type { TaskListParams, TaskSortField } from "@/types/taskList"
@@ -162,6 +164,7 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
             task.num_user_messages,
             task.num_devin_messages,
           )
+          const issueLabels = parseIssueLabels(task.issue_labels)
           const isExpandable = terminalTaskStatuses.includes(task.status)
           const isExpanded = expandedTaskIds.has(task.id)
 
@@ -195,6 +198,19 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
                       {task.github_repository}#{task.github_issue_number}
                     </a>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.issue_title}</p>
+                    {issueLabels.length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {issueLabels.map((label) => (
+                          <Badge
+                            key={label}
+                            variant="outline"
+                            className="border-border px-1.5 py-0 text-[10px] font-normal text-muted-foreground"
+                          >
+                            {label}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
                     {isSmokeTestTask(task) && (
                       <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
                         Smoke test{task.issue_type.toLowerCase() === "dummy" ? " · dummy" : ""}
@@ -202,8 +218,13 @@ export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableP
                     )}
                   </div>
                 </TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  {formatTriggerSource(task.trigger_source)}
+                <TableCell>
+                  <Badge
+                    variant={getTriggerSourceBadgeVariant(task.trigger_source)}
+                    className="whitespace-nowrap font-normal"
+                  >
+                    {formatTriggerSource(task.trigger_source)}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={task.status} />

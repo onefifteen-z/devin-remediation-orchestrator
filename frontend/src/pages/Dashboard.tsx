@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query"
 import { AlertCircle, RefreshCw, ScanSearch } from "lucide-react"
 import { useState } from "react"
 import { fetchMetrics, fetchTasks, refreshTasksFromDevin, scanGitHubIssues } from "@/api/client"
+import { DevinOrgMetricsSection } from "@/components/DevinOrgMetricsSection"
 import { MetricCard } from "@/components/MetricCard"
 import { TaskListControls } from "@/components/TaskListControls"
 import { TaskTable } from "@/components/TaskTable"
@@ -12,7 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
-import { formatVerifiedAcuTotal, getAttentionSummary } from "@/lib/devin"
+import { formatVerifiedAcuTotal, getAttentionSummary, getVerifiedAcuNote } from "@/lib/devin"
 import { DEFAULT_PAGE_SIZE } from "@/lib/taskList"
 import { formatDuration, formatPercent } from "@/lib/utils"
 import type { TaskListParams } from "@/types/taskList"
@@ -192,14 +193,17 @@ export function Dashboard() {
             loading={isLoading}
           />
           <MetricCard
-            title="Verified ACU"
+            title="Devin Usage"
             value={
               metrics ? formatVerifiedAcuTotal(metrics.verified_total_acu) : "—"
             }
             description={
-              metrics?.consumption_api_available === false
-                ? "Consumption API unavailable"
-                : "Sum of consumption-verified task ACU only"
+              metrics
+                ? getVerifiedAcuNote(
+                    metrics.verified_total_acu,
+                    metrics.consumption_api_available,
+                  )
+                : undefined
             }
             loading={isLoading}
           />
@@ -210,6 +214,12 @@ export function Dashboard() {
         ) : (
           <ThroughputChart data={metrics?.throughput_by_day ?? []} />
         )}
+
+        <DevinOrgMetricsSection
+          orgMetrics={metrics?.devin_org_metrics ?? null}
+          windowDays={metrics?.org_metrics_window_days ?? 30}
+          loading={isLoading}
+        />
 
         <Separator />
 
