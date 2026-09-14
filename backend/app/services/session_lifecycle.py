@@ -2,6 +2,7 @@ import json
 import logging
 
 from app.models.task import RemediationTask, TaskStatus
+from app.schemas.devin_insights import SessionInsights
 from app.schemas.devin_session import DevinPullRequest, DevinSessionResponse
 from app.schemas.remediation_result import (
     parse_remediation_result,
@@ -81,6 +82,20 @@ def extract_devin_audit_fields(session: DevinSessionResponse) -> dict:
     if session.playbook_id:
         fields["playbook_id"] = session.playbook_id
     return fields
+
+
+def extract_session_insights_fields(insights: SessionInsights) -> dict:
+    """Build DB field updates from Devin session insights."""
+    analysis = insights.analysis
+    return {
+        "session_size": insights.session_size,
+        "num_user_messages": insights.num_user_messages,
+        "num_devin_messages": insights.num_devin_messages,
+        "insights_status": insights.analysis_status,
+        "insights_json": (
+            analysis.model_dump_json() if analysis is not None and not analysis.is_empty() else None
+        ),
+    }
 
 
 def _parse_structured_output(session: DevinSessionResponse):

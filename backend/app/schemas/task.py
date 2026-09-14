@@ -78,6 +78,11 @@ class TaskResponse(BaseModel):
     acu_used: float | None
     acu_source: str | None = None
     acu_verified: bool = False
+    session_size: str | None = None
+    num_user_messages: int | None = None
+    num_devin_messages: int | None = None
+    insights_status: str | None = None
+    insights_json: str | None = None
     remediation_outcome: str | None = None
     root_cause: str | None = None
     implementation_summary: str | None = None
@@ -143,6 +148,11 @@ class TaskResponse(BaseModel):
             acu_used=task.acu_used,
             acu_source=task.acu_source,
             acu_verified=task.acu_verified,
+            session_size=task.session_size,
+            num_user_messages=task.num_user_messages,
+            num_devin_messages=task.num_devin_messages,
+            insights_status=task.insights_status,
+            insights_json=task.insights_json,
             remediation_outcome=task.remediation_outcome,
             root_cause=task.root_cause,
             implementation_summary=task.implementation_summary,
@@ -158,3 +168,9 @@ class TaskResponse(BaseModel):
 class TaskListResponse(BaseModel):
     items: list[TaskResponse]
     total: int
+
+
+class TaskRefreshResponse(BaseModel):
+    synced: int
+    skipped: int
+    errors: int

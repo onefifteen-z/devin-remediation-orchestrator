@@ -42,6 +42,16 @@ export async function fetchTasks(params: TaskListParams = {}): Promise<TaskListR
   return request(`/api/tasks${buildTaskListQuery(params)}`)
 }
 
+export interface TaskRefreshResult {
+  synced: number
+  skipped: number
+  errors: number
+}
+
+export async function refreshTasksFromDevin(): Promise<TaskRefreshResult> {
+  return request("/api/tasks/refresh", { method: "POST" })
+}
+
 export async function fetchTask(taskId: number): Promise<Task> {
   return request(`/api/tasks/${taskId}`)
 }

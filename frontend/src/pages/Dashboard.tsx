@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query"
 import { AlertCircle, RefreshCw, ScanSearch } from "lucide-react"
 import { useState } from "react"
-import { fetchMetrics, fetchTasks, scanGitHubIssues } from "@/api/client"
+import { fetchMetrics, fetchTasks, refreshTasksFromDevin, scanGitHubIssues } from "@/api/client"
 import { MetricCard } from "@/components/MetricCard"
 import { TaskListControls } from "@/components/TaskListControls"
 import { TaskTable } from "@/components/TaskTable"
@@ -28,6 +28,7 @@ const DEFAULT_TASK_LIST_PARAMS: TaskListParams = {
 export function Dashboard() {
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [isRefreshing, setIsRefreshing] = useState(false)
   const [taskListParams, setTaskListParams] = useState<TaskListParams>(
     DEFAULT_TASK_LIST_PARAMS,
   )
@@ -76,9 +77,18 @@ export function Dashboard() {
     },
   })
 
-  const refetch = () => {
-    metricsQuery.refetch()
-    tasksQuery.refetch()
+  const refetch = async () => {
+    setIsRefreshing(true)
+    try {
+      await refreshTasksFromDevin()
+      await Promise.all([
+        metricsQuery.refetch(),
+        tasksQuery.refetch(),
+        attentionQuery.refetch(),
+      ])
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   const metrics = metricsQuery.data
@@ -107,9 +117,9 @@ export function Dashboard() {
               <ScanSearch className="mr-2 h-3.5 w-3.5" />
               {scanMutation.isPending ? "Scanning..." : "Scan labeled issues"}
             </Button>
-            <Button variant="outline" size="sm" onClick={refetch} disabled={isLoading}>
-              <RefreshCw className="mr-2 h-3.5 w-3.5" />
-              Refresh
+            <Button variant="outline" size="sm" onClick={() => void refetch()} disabled={isLoading || isRefreshing}>
+              <RefreshCw className={`mr-2 h-3.5 w-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Syncing..." : "Refresh"}
             </Button>
           </div>
         </div>

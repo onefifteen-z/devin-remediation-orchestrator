@@ -5,7 +5,8 @@ from app.config import Settings, get_settings
 from app.database import get_db
 from app.models.task import TaskStatus, TriggerSource
 from app.repositories.tasks import TASK_SORT_FIELDS, TaskListQuery, TaskRepository
-from app.schemas.task import TaskListResponse, TaskResponse
+from app.schemas.task import TaskListResponse, TaskRefreshResponse, TaskResponse
+from app.services.orchestration import RemediationOrchestrator
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 
@@ -52,6 +53,19 @@ def list_tasks(
         ],
         total=total,
     )
+
+
+@router.post("/refresh", response_model=TaskRefreshResponse)
+async def refresh_tasks(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_settings),
+) -> TaskRefreshResponse:
+    orchestrator = RemediationOrchestrator(db, settings)
+    try:
+        result = await orchestrator.refresh_tasks_from_devin()
+    finally:
+        await orchestrator.devin_client.close()
+    return TaskRefreshResponse(**result)
 
 
 @router.get("/{task_id}", response_model=TaskResponse)

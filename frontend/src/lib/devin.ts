@@ -140,6 +140,26 @@ export function extractPrNumber(prUrl: string): string | null {
 
 export const terminalTaskStatuses = TERMINAL_TASK_STATUSES
 
+export function getRawDevinStateSnapshotNote(taskStatus: TaskStatus): string | null {
+  if (!TERMINAL_TASK_STATUSES.includes(taskStatus)) {
+    return null
+  }
+  return "Session snapshot (last sync before or at terminal state)"
+}
+
+export function getRawDevinStateClarification(
+  taskStatus: TaskStatus,
+  devinStatusDetail: string | null | undefined,
+): string | null {
+  if (
+    taskStatus === "MERGED" &&
+    devinStatusDetail?.toLowerCase() === "waiting_for_user"
+  ) {
+    return "Business outcome: merged — session may have ended after last sync"
+  }
+  return null
+}
+
 export function formatAcuDisplay(
   acuUsed: number | null | undefined,
   acuSource: string | null | undefined,

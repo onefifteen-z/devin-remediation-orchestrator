@@ -58,6 +58,18 @@ async def _post_merge_actions_background(task_id: int) -> None:
         db.close()
 
 
+async def _terminal_devin_audit_background(task_id: int) -> None:
+    db = get_session_factory()()
+    try:
+        settings = get_settings()
+        orchestrator = RemediationOrchestrator(db, settings)
+        await orchestrator.sync_terminal_devin_audit(task_id)
+    except Exception:
+        logger.exception("Terminal Devin audit sync failed", extra={"task_id": task_id})
+    finally:
+        db.close()
+
+
 async def _send_ci_repair_message_background(task_id: int, message: str) -> None:
     db = get_session_factory()()
     try:
@@ -174,6 +186,13 @@ def _handle_pull_request_event(
         response["task_id"] = task_id
     if outcome == "merged" and task_id is not None:
         background_tasks.add_task(_post_merge_actions_background, task_id)
+    elif (
+        outcome == "processed"
+        and task_id is not None
+        and event.action == "closed"
+        and not event.merged
+    ):
+        background_tasks.add_task(_terminal_devin_audit_background, task_id)
 
     return response, 200
 

@@ -13,6 +13,7 @@ from app.schemas.devin_automation import (
     parse_automation_list_response,
     parse_automation_response,
 )
+from app.schemas.devin_insights import SessionInsights, parse_session_insights_list
 from app.schemas.devin_schedule import ScheduleResponse, parse_schedule_response
 from app.schemas.devin_session import DevinSessionResponse, parse_devin_session_response
 
@@ -188,6 +189,18 @@ class DevinClient:
             },
         )
         return session
+
+    async def list_session_insights(self, limit: int = 100) -> list[SessionInsights]:
+        """Fetch insights for every org session in one call, avoiding per-task requests."""
+        data = await self._request_json(
+            "GET",
+            self._org_path("/sessions/insights"),
+            params={"limit": limit},
+        )
+        try:
+            return parse_session_insights_list(data)
+        except ValueError:
+            raise DevinAPIError("Malformed Devin API response") from None
 
     async def send_message(self, devin_id: str, message: str) -> DevinSessionResult:
         data = await self._request_json(

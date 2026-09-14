@@ -8,6 +8,8 @@ import {
   formatVerifiedAcuTotal,
   getAttentionSummary,
   getDevinAlertForTask,
+  getRawDevinStateClarification,
+  getRawDevinStateSnapshotNote,
 } from "./devin"
 
 describe("formatAcuDisplay", () => {
@@ -63,6 +65,23 @@ describe("terminal task Devin presentation", () => {
   })
 })
 
+describe("raw Devin state snapshot notes", () => {
+  it("shows snapshot note for terminal tasks only", () => {
+    expect(getRawDevinStateSnapshotNote("MERGED")).toBe(
+      "Session snapshot (last sync before or at terminal state)",
+    )
+    expect(getRawDevinStateSnapshotNote("RUNNING")).toBeNull()
+  })
+
+  it("clarifies merged tasks that still show waiting_for_user", () => {
+    expect(getRawDevinStateClarification("MERGED", "waiting_for_user")).toBe(
+      "Business outcome: merged — session may have ended after last sync",
+    )
+    expect(getRawDevinStateClarification("MERGED", "finished")).toBeNull()
+    expect(getRawDevinStateClarification("RUNNING", "waiting_for_user")).toBeNull()
+  })
+})
+
 describe("getAttentionSummary", () => {
   const baseTask: Task = {
     id: 1,
@@ -106,6 +125,11 @@ describe("getAttentionSummary", () => {
     acu_used: null,
     acu_source: null,
     acu_verified: false,
+    session_size: null,
+    num_user_messages: null,
+    num_devin_messages: null,
+    insights_status: null,
+    insights_json: null,
     remediation_outcome: null,
     root_cause: null,
     implementation_summary: null,

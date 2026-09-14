@@ -110,6 +110,12 @@ class RemediationTask(Base):
     acu_source: Mapped[str | None] = mapped_column(String(32), nullable=True)
     acu_verified: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    session_size: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    num_user_messages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    num_devin_messages: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    insights_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    insights_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     remediation_outcome: Mapped[str | None] = mapped_column(String(16), nullable=True)
     root_cause: Mapped[str | None] = mapped_column(Text, nullable=True)
     implementation_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
