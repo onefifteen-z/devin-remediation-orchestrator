@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from "lucide-react"
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight } from "lucide-react"
 import { Fragment, useState } from "react"
 import { StatusBadge } from "@/components/StatusBadge"
 import {
@@ -22,11 +22,59 @@ import {
   parseStructuredResult,
   terminalTaskStatuses,
 } from "@/lib/devin"
+import { getNextSortParams, isSmokeTestTask } from "@/lib/taskList"
 import { formatDateTime } from "@/lib/utils"
 import type { Task } from "@/types/task"
+import type { TaskListParams, TaskSortField } from "@/types/taskList"
 
 interface TaskTableProps {
   tasks: Task[]
+  sortBy: TaskSortField
+  sortOrder: TaskListParams["sort_order"]
+  onSortChange: (next: Pick<TaskListParams, "sort_by" | "sort_order" | "offset">) => void
+}
+
+interface SortableHeaderProps {
+  field: TaskSortField
+  label: string
+  sortBy: TaskSortField
+  sortOrder: TaskListParams["sort_order"]
+  onSort: (field: TaskSortField) => void
+  className?: string
+}
+
+function SortableHeader({
+  field,
+  label,
+  sortBy,
+  sortOrder,
+  onSort,
+  className,
+}: SortableHeaderProps) {
+  const active = sortBy === field
+
+  return (
+    <TableHead className={className}>
+      <button
+        type="button"
+        onClick={() => onSort(field)}
+        className="group inline-flex items-center gap-1 text-left transition-colors hover:text-foreground"
+      >
+        <span>{label}</span>
+        <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
+          {active ? (
+            sortOrder === "desc" ? (
+              <ArrowDown className="h-3 w-3 text-foreground" />
+            ) : (
+              <ArrowUp className="h-3 w-3 text-foreground" />
+            )
+          ) : (
+            <ArrowDown className="h-3 w-3 opacity-0 transition-opacity group-hover:opacity-30" />
+          )}
+        </span>
+      </button>
+    </TableHead>
+  )
 }
 
 function StructuredResultDetails({ task }: { task: Task }) {
@@ -155,8 +203,12 @@ function StructuredResultDetails({ task }: { task: Task }) {
   )
 }
 
-export function TaskTable({ tasks }: TaskTableProps) {
+export function TaskTable({ tasks, sortBy, sortOrder, onSortChange }: TaskTableProps) {
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<number>>(new Set())
+
+  const handleSort = (field: TaskSortField) => {
+    onSortChange(getNextSortParams({ sort_by: sortBy, sort_order: sortOrder }, field))
+  }
 
   const toggleExpanded = (taskId: number) => {
     setExpandedTaskIds((current) => {
@@ -175,14 +227,44 @@ export function TaskTable({ tasks }: TaskTableProps) {
       <TableHeader>
         <TableRow>
           <TableHead className="w-8" />
-          <TableHead>Issue</TableHead>
-          <TableHead>Source</TableHead>
-          <TableHead>Status</TableHead>
+          <SortableHeader
+            field="repository"
+            label="Issue"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="trigger_source"
+            label="Source"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="status"
+            label="Status"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
           <TableHead>Devin</TableHead>
           <TableHead>PR / CI</TableHead>
           <TableHead>ACU</TableHead>
-          <TableHead>Created</TableHead>
-          <TableHead>Merged At</TableHead>
+          <SortableHeader
+            field="created_at"
+            label="Created"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
+          <SortableHeader
+            field="merged_at"
+            label="Merged At"
+            sortBy={sortBy}
+            sortOrder={sortOrder}
+            onSort={handleSort}
+          />
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -237,9 +319,9 @@ export function TaskTable({ tasks }: TaskTableProps) {
                       {task.github_repository}#{task.github_issue_number}
                     </a>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">{task.issue_title}</p>
-                    {task.task_kind === "smoke_test" && (
+                    {isSmokeTestTask(task) && (
                       <p className="mt-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        Smoke test
+                        Smoke test{task.issue_type.toLowerCase() === "dummy" ? " · dummy" : ""}
                       </p>
                     )}
                   </div>

@@ -3,19 +3,34 @@ import { AlertCircle, RefreshCw, ScanSearch } from "lucide-react"
 import { useState } from "react"
 import { fetchMetrics, fetchTasks, scanGitHubIssues } from "@/api/client"
 import { MetricCard } from "@/components/MetricCard"
+import { TaskListControls } from "@/components/TaskListControls"
 import { TaskTable } from "@/components/TaskTable"
 import { ThroughputChart } from "@/components/ThroughputChart"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatVerifiedAcuTotal, getAttentionSummary } from "@/lib/devin"
+import { DEFAULT_PAGE_SIZE } from "@/lib/taskList"
 import { formatDuration, formatPercent } from "@/lib/utils"
+import type { TaskListParams } from "@/types/taskList"
+
+const DEFAULT_TASK_LIST_PARAMS: TaskListParams = {
+  limit: DEFAULT_PAGE_SIZE,
+  offset: 0,
+  include_smoke_tests: false,
+  sort_by: "created_at",
+  sort_order: "desc",
+}
 
 export function Dashboard() {
   const [scanMessage, setScanMessage] = useState<string | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
+  const [taskListParams, setTaskListParams] = useState<TaskListParams>(
+    DEFAULT_TASK_LIST_PARAMS,
+  )
 
   const metricsQuery = useQuery({
     queryKey: ["metrics"],
@@ -24,8 +39,21 @@ export function Dashboard() {
   })
 
   const tasksQuery = useQuery({
-    queryKey: ["tasks"],
-    queryFn: fetchTasks,
+    queryKey: ["tasks", taskListParams],
+    queryFn: () => fetchTasks(taskListParams),
+    refetchInterval: 15000,
+  })
+
+  const attentionQuery = useQuery({
+    queryKey: ["tasks", "attention"],
+    queryFn: () =>
+      fetchTasks({
+        include_smoke_tests: false,
+        limit: 500,
+        offset: 0,
+        sort_by: "created_at",
+        sort_order: "desc",
+      }),
     refetchInterval: 15000,
   })
 
@@ -55,7 +83,8 @@ export function Dashboard() {
 
   const metrics = metricsQuery.data
   const tasks = tasksQuery.data?.items ?? []
-  const attention = getAttentionSummary(tasks)
+  const taskTotal = tasksQuery.data?.total ?? 0
+  const attention = getAttentionSummary(attentionQuery.data?.items ?? [])
   const attentionCount = attention.escalated + attention.failed + attention.needsHuman
 
   return (
@@ -175,10 +204,35 @@ export function Dashboard() {
         <Separator />
 
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
             <CardTitle>Recent Remediations</CardTitle>
+            <label
+              htmlFor="show-smoke-tests"
+              className="flex items-center gap-2 text-xs text-muted-foreground"
+            >
+              <span className="hidden sm:inline">Show smoke tests</span>
+              <span className="sm:hidden">Smoke tests</span>
+              <Switch
+                id="show-smoke-tests"
+                checked={Boolean(taskListParams.include_smoke_tests)}
+                onCheckedChange={(checked) =>
+                  setTaskListParams((current) => ({
+                    ...current,
+                    include_smoke_tests: checked,
+                    offset: 0,
+                  }))
+                }
+              />
+            </label>
           </CardHeader>
           <CardContent>
+            <TaskListControls
+              params={taskListParams}
+              total={taskTotal}
+              onChange={(next) =>
+                setTaskListParams((current) => ({ ...current, ...next }))
+              }
+            />
             {isLoading ? (
               <div className="space-y-3">
                 <Skeleton className="h-10 w-full" />
@@ -187,14 +241,32 @@ export function Dashboard() {
               </div>
             ) : tasks.length === 0 ? (
               <Alert>
-                <AlertTitle>No remediations yet</AlertTitle>
+                <AlertTitle>No tasks match</AlertTitle>
                 <AlertDescription>
-                  Add the <code className="rounded bg-muted px-1 py-0.5 text-xs">devin-remediate</code>{" "}
-                  label to a GitHub issue, then click Scan labeled issues to import existing open issues.
+                  {taskListParams.include_smoke_tests ||
+                  taskListParams.status ||
+                  taskListParams.search ||
+                  taskListParams.trigger_source
+                    ? "Try clearing filters or enabling smoke tests."
+                    : (
+                      <>
+                        Add the{" "}
+                        <code className="rounded bg-muted px-1 py-0.5 text-xs">devin-remediate</code>{" "}
+                        label to a GitHub issue, then click Scan labeled issues to import existing
+                        open issues.
+                      </>
+                    )}
                 </AlertDescription>
               </Alert>
             ) : (
-              <TaskTable tasks={tasks} />
+              <TaskTable
+                tasks={tasks}
+                sortBy={taskListParams.sort_by ?? "created_at"}
+                sortOrder={taskListParams.sort_order ?? "desc"}
+                onSortChange={(next) =>
+                  setTaskListParams((current) => ({ ...current, ...next }))
+                }
+              />
             )}
           </CardContent>
         </Card>

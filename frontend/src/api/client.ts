@@ -1,6 +1,8 @@
 import type { Metrics } from "@/types/metrics"
 import type { ScanResult } from "@/types/scan"
+import { buildTaskListQuery } from "@/lib/taskList"
 import type { Task, TaskListResponse } from "@/types/task"
+import type { TaskListParams } from "@/types/taskList"
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000"
 
@@ -36,8 +38,8 @@ export async function fetchMetrics(): Promise<Metrics> {
   return request("/api/metrics")
 }
 
-export async function fetchTasks(): Promise<TaskListResponse> {
-  return request("/api/tasks")
+export async function fetchTasks(params: TaskListParams = {}): Promise<TaskListResponse> {
+  return request(`/api/tasks${buildTaskListQuery(params)}`)
 }
 
 export async function fetchTask(taskId: number): Promise<Task> {

@@ -39,6 +39,7 @@ def test_trigger_source_mapping_includes_scheduled():
 def test_task_kind_from_title_smoke_test():
     assert task_kind_from_title("Webhook integration smoke test") == TaskKind.SMOKE_TEST.value
     assert task_kind_from_title("Real bug") == TaskKind.REMEDIATION.value
+    assert task_kind_from_title("Webhook check", "dummy") == TaskKind.SMOKE_TEST.value
 
 
 def test_merge_rate_excludes_smoke_test_by_task_kind(db_session):

@@ -19,8 +19,11 @@ def test_trigger_source_from_event_source_mapping():
 
 
 def test_is_smoke_test_task_uses_task_kind():
-    task = SimpleNamespace(task_kind="smoke_test", issue_title="Webhook integration smoke test")
+    task = SimpleNamespace(task_kind="smoke_test", issue_title="Webhook integration smoke test", issue_type="bug")
     assert is_smoke_test_task(task) is True
+
+    dummy_task = SimpleNamespace(task_kind="remediation", issue_title="Webhook check", issue_type="dummy")
+    assert is_smoke_test_task(dummy_task) is True
     assert is_production_remediation(task) is False
 
 

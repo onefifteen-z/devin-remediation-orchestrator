@@ -1,3 +1,4 @@
+import { isSmokeTestTask } from "@/lib/taskList"
 import type { Task, TaskStatus } from "@/types/task"
 
 const STATUS_DETAIL_LABELS: Record<string, string> = {
@@ -116,7 +117,7 @@ export function getAttentionSummary(tasks: Task[]): {
   let needsHuman = 0
 
   for (const task of tasks) {
-    if (task.task_kind === "smoke_test") continue
+    if (isSmokeTestTask(task)) continue
     if (task.status === "ESCALATED") escalated += 1
     if (task.status === "FAILED") failed += 1
     if (getDevinAlertForTask(task.status, task.devin_status, task.devin_status_detail)) {

@@ -162,7 +162,9 @@ class RemediationOrchestrator:
                     github_issue_url=event.github_issue_url,
                     issue_title=event.issue_title,
                     issue_type=event.issue_type,
-                    task_kind=task_kind_from_title(event.issue_title),
+                    task_kind=task_kind_from_title(
+                        event.issue_title, event.issue_type
+                    ),
                     trigger_source=trigger_source_from_event_source(event.source),
                     max_retries=self.settings.max_retries,
                 )
