@@ -100,12 +100,12 @@ class CiFailureHandler:
         if not task:
             return CiHandleResult(outcome="ignored")
 
+        updates: dict = {"last_ci_check_run_id": event.check_run_id}
+        processed = False
+
         if task.ci_failure_at and task.ci_repair_verified_at is None:
-            self.repo.update_task(
-                task,
-                ci_repair_verified_at=datetime.now(UTC),
-                last_ci_check_run_id=event.check_run_id,
-            )
+            updates["ci_repair_verified_at"] = datetime.now(UTC)
+            processed = True
             logger.info(
                 "ci_repair_verified",
                 extra={
@@ -116,6 +116,23 @@ class CiFailureHandler:
                     "repository": event.repository,
                 },
             )
+
+        if task.ci_passed_at is None:
+            updates["ci_passed_at"] = datetime.now(UTC)
+            processed = True
+            logger.info(
+                "ci_passed",
+                extra={
+                    "event": "check_run",
+                    "delivery_id": event.delivery_id,
+                    "task_id": task.id,
+                    "check_run_id": event.check_run_id,
+                    "repository": event.repository,
+                },
+            )
+
+        if processed:
+            self.repo.update_task(task, **updates)
             return CiHandleResult(outcome="processed", task_id=task.id)
 
         return CiHandleResult(outcome="ignored")

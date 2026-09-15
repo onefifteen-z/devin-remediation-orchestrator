@@ -4,13 +4,16 @@ import {
   formatAcuDisplay,
   formatDevinUsageKpi,
   formatTriggerSource,
+  getActiveTriggerSources,
   getAttentionSummary,
   getDevinPresentationState,
   getDevinUsageNote,
   getRawDevinStateClarification,
   getRawDevinStateSnapshotNote,
   getTriggerSourceBadgeVariant,
+  getTriggerSourceChartColor,
   hasExplicitBlocker,
+  isDevinActivelyWorking,
 } from "./devin"
 import { makeTask } from "./testFixtures"
 
@@ -38,6 +41,21 @@ describe("Devin presentation states", () => {
     expect(getDevinPresentationState(task)).toMatchObject({
       state: "waiting_for_ci",
       label: "Waiting for CI",
+    })
+  })
+
+  it("maps open PR with passed CI to Waiting for review", () => {
+    const task = makeTask({
+      status: "PR_OPENED",
+      pr_url: "https://github.com/owner/repo/pull/19",
+      pr_state: "open",
+      ci_passed_at: "2026-09-15T03:07:56Z",
+      devin_status: "suspended",
+      devin_status_detail: "inactivity",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "waiting_for_review",
+      label: "Waiting for review",
     })
   })
 
@@ -147,6 +165,29 @@ describe("getTriggerSourceBadgeVariant", () => {
   })
 })
 
+describe("throughput chart helpers", () => {
+  it("returns distinct colors for each trigger source", () => {
+    const colors = ["github_webhook", "manual_api", "scan", "scheduled"].map(
+      getTriggerSourceChartColor,
+    )
+    expect(new Set(colors).size).toBe(colors.length)
+  })
+
+  it("returns only sources with non-zero counts", () => {
+    const active = getActiveTriggerSources([
+      {
+        by_source: {
+          github_webhook: 2,
+          manual_api: 0,
+          scan: 1,
+          scheduled: 0,
+        },
+      },
+    ])
+    expect(active).toEqual(["github_webhook", "scan"])
+  })
+})
+
 describe("Devin usage", () => {
   it("F25: shows verified ACU with verified note", () => {
     expect(formatDevinUsageKpi(3.2)).toBe("3.2 ACU")
@@ -169,6 +210,29 @@ describe("Devin usage", () => {
     expect(getDevinUsageNote(0, true)).toBe(
       "Enterprise ACU reporting unavailable (self-serve/on-demand)",
     )
+  })
+})
+
+describe("COMPLETED presentation", () => {
+  it("shows resolved without PR for completed tasks", () => {
+    const task = makeTask({
+      status: "COMPLETED",
+      completion_reason: "Issue already fixed in main branch",
+      remediation_outcome: "success",
+    })
+    const presentation = getDevinPresentationState(task)
+    expect(presentation.label).toBe("Resolved without PR")
+    expect(presentation.sublabel).toBe("Issue already fixed in main branch")
+  })
+
+  it("stops showing working when structured outcome exists while running", () => {
+    const task = makeTask({
+      status: "RUNNING",
+      devin_status: "running",
+      devin_status_detail: "finished",
+      remediation_outcome: "success",
+    })
+    expect(isDevinActivelyWorking(task)).toBe(false)
   })
 })
 

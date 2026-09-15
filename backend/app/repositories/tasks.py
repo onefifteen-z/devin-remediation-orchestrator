@@ -203,6 +203,22 @@ class TaskRepository:
         )
         return self.db.scalar(stmt) or 0
 
+    def list_tasks_pending_ci_sync(self) -> list[RemediationTask]:
+        stmt = (
+            select(RemediationTask)
+            .where(
+                RemediationTask.pr_url.isnot(None),
+                RemediationTask.ci_passed_at.is_(None),
+                RemediationTask.ci_repair_verified_at.is_(None),
+                RemediationTask.ci_failure_at.is_(None),
+                RemediationTask.status.in_(
+                    [TaskStatus.PR_OPENED, TaskStatus.READY_FOR_REVIEW]
+                ),
+            )
+            .order_by(RemediationTask.updated_at.asc())
+        )
+        return list(self.db.scalars(stmt).all())
+
     def list_pollable_tasks(self) -> list[RemediationTask]:
         stmt = (
             select(RemediationTask)

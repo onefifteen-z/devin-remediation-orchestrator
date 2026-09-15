@@ -29,7 +29,13 @@ export function hasCiFailure(task: Task): boolean {
 
 export function getCiSummaryState(task: Task): CiSummaryState {
   if (hasCiFailure(task)) return "failed"
-  if (task.status === "MERGED" || task.ci_repair_verified_at) return "passed"
+  if (
+    task.status === "MERGED" ||
+    task.ci_passed_at ||
+    task.ci_repair_verified_at
+  ) {
+    return "passed"
+  }
   if (
     hasOpenPr(task) &&
     !hasCiFailure(task) &&

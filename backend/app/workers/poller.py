@@ -40,13 +40,11 @@ class SessionPoller:
             db = self.session_factory()
             try:
                 repo = TaskRepository(db)
-                pollable = repo.list_pollable_tasks()
-                if not pollable:
-                    return
-
                 orchestrator = RemediationOrchestrator(
                     db, self.settings, devin_client=self.devin_client
                 )
+
+                pollable = repo.list_pollable_tasks()
                 for task in pollable:
                     claimed = repo.claim_task_for_polling(task.id)
                     if not claimed:
@@ -56,6 +54,10 @@ class SessionPoller:
                         self._failure_counts.pop(claimed.id, None)
                     except DevinAPIError as exc:
                         self._handle_poll_failure(db, claimed.id, exc)
+
+                if self.settings.github_token:
+                    for task in repo.list_tasks_pending_ci_sync():
+                        await orchestrator.sync_task_ci_from_github(task.id)
             finally:
                 db.close()
 

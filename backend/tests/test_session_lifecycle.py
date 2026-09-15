@@ -80,6 +80,47 @@ def test_status_mapping_exit_without_pr(db_session):
     assert map_devin_session_to_task_status(task, session) == TaskStatus.FAILED
 
 
+def test_status_mapping_exit_with_success_structured_output(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session(
+        "exit",
+        structured_output={"outcome": "success", "implementation_summary": "Already fixed"},
+    )
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.COMPLETED
+
+
+def test_status_mapping_running_with_persisted_success_outcome(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    task = TaskRepository(db_session).update_task(
+        task,
+        remediation_outcome="success",
+        implementation_summary="Issue already fixed upstream",
+    )
+    session = _session("running", status_detail="working")
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.COMPLETED
+
+
+def test_status_mapping_suspended_with_persisted_success_outcome(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    task = TaskRepository(db_session).update_task(
+        task,
+        remediation_outcome="success",
+        root_cause="No code change required",
+    )
+    session = _session("suspended", status_detail="inactivity")
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.COMPLETED
+
+
+def test_status_mapping_running_finished_with_success_structured_output(db_session):
+    task = _task(db_session, TaskStatus.RUNNING)
+    session = _session(
+        "running",
+        status_detail="finished",
+        structured_output={"outcome": "success", "root_cause": "Issue already resolved"},
+    )
+    assert map_devin_session_to_task_status(task, session) == TaskStatus.COMPLETED
+
+
 def test_status_mapping_exit_with_failed_structured_output(db_session):
     task = _task(db_session, TaskStatus.RUNNING)
     session = _session("exit", structured_output={"status": "failed", "root_cause": "Could not reproduce"})

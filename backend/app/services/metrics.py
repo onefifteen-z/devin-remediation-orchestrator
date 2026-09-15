@@ -3,7 +3,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models.task import ACTIVE_STATUSES, TERMINAL_STATUSES, RemediationTask, TaskStatus
+from app.models.task import (
+    ACTIVE_STATUSES,
+    TERMINAL_STATUSES,
+    RemediationTask,
+    TaskStatus,
+    TriggerSource,
+)
 from app.repositories.tasks import TaskRepository
 from app.schemas.ci import FailureType
 from app.schemas.devin_consumption import ConsumptionResponse
@@ -45,8 +51,13 @@ class MetricsService:
             t for t in production_tasks if t.status in TERMINAL_STATUSES
         ]
 
+        successful_terminal = [
+            t
+            for t in production_terminal
+            if t.status in {TaskStatus.MERGED, TaskStatus.COMPLETED}
+        ]
         success_rate = (
-            len(merged_production) / len(production_terminal)
+            len(successful_terminal) / len(production_terminal)
             if production_terminal
             else 0.0
         )
@@ -187,17 +198,30 @@ def _ensure_aware(dt: datetime) -> datetime:
     return dt
 
 
+def _empty_source_counts() -> dict[str, int]:
+    return {source.value: 0 for source in TriggerSource}
+
+
 def _throughput_by_day(tasks: list[RemediationTask], days: int) -> list[ThroughputPoint]:
     now = datetime.now(UTC).date()
-    counts: dict[str, int] = {}
+    counts: dict[str, dict[str, int]] = {}
     for i in range(days):
         day = now - timedelta(days=days - 1 - i)
-        counts[day.isoformat()] = 0
+        counts[day.isoformat()] = _empty_source_counts()
 
     for task in tasks:
         created = _ensure_aware(task.created_at).date()
         key = created.isoformat()
-        if key in counts:
-            counts[key] += 1
+        if key not in counts:
+            continue
+        source = task.trigger_source or "unknown"
+        counts[key][source] = counts[key].get(source, 0) + 1
 
-    return [ThroughputPoint(date=date, count=count) for date, count in counts.items()]
+    return [
+        ThroughputPoint(
+            date=date,
+            count=sum(by_source.values()),
+            by_source=by_source,
+        )
+        for date, by_source in counts.items()
+    ]

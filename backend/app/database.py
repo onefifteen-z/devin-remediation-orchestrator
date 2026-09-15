@@ -58,6 +58,20 @@ PHASE_5_ADVANCED_COLUMNS = {
     "acu_verified",
 }
 
+PHASE_7_TASK_KIND_COLUMNS = {"task_kind"}
+
+PHASE_8_SESSION_INSIGHTS_COLUMNS = {
+    "session_size",
+    "num_user_messages",
+    "num_devin_messages",
+    "insights_status",
+    "insights_json",
+}
+
+PHASE_9_ISSUE_LABELS_COLUMNS = {"issue_labels"}
+
+PHASE_10_COMPLETION_COLUMNS = {"ci_passed_at", "completion_reason"}
+
 
 def get_engine():
     global _engine
@@ -112,7 +126,57 @@ def _upgrade_database(engine, database_url: str) -> None:
             has_phase_3_ci = PHASE_3_CI_COLUMNS.issubset(columns)
             has_trigger_source = PHASE_5_TRIGGER_SOURCE_COLUMNS.issubset(columns)
             has_phase_5_advanced = PHASE_5_ADVANCED_COLUMNS.issubset(columns)
+            has_phase_7_task_kind = PHASE_7_TASK_KIND_COLUMNS.issubset(columns)
+            has_phase_8_session_insights = PHASE_8_SESSION_INSIGHTS_COLUMNS.issubset(columns)
+            has_phase_9_issue_labels = PHASE_9_ISSUE_LABELS_COLUMNS.issubset(columns)
+            has_phase_10_completion = PHASE_10_COMPLETION_COLUMNS.issubset(columns)
             if (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+                and has_phase_5_advanced
+                and has_phase_7_task_kind
+                and has_phase_8_session_insights
+                and has_phase_9_issue_labels
+                and has_phase_10_completion
+            ):
+                baseline = "0010"
+            elif (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+                and has_phase_5_advanced
+                and has_phase_7_task_kind
+                and has_phase_8_session_insights
+                and has_phase_9_issue_labels
+            ):
+                baseline = "0009"
+            elif (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+                and has_phase_5_advanced
+                and has_phase_7_task_kind
+                and has_phase_8_session_insights
+            ):
+                baseline = "0008"
+            elif (
+                has_phase_2b
+                and PHASE_2C_COLUMNS.issubset(columns)
+                and has_webhook_deliveries
+                and has_phase_3_ci
+                and has_trigger_source
+                and has_phase_5_advanced
+                and has_phase_7_task_kind
+            ):
+                baseline = "0007"
+            elif (
                 has_phase_2b
                 and PHASE_2C_COLUMNS.issubset(columns)
                 and has_webhook_deliveries

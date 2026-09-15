@@ -1,9 +1,10 @@
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 from app.models.task import TaskKind, TaskStatus, TriggerSource
 from app.repositories.tasks import TaskRepository
 from app.schemas.task import TaskCreate
-from app.services.metrics import MetricsService
+from app.services.metrics import MetricsService, _throughput_by_day
 from app.services.task_classification import (
     is_production_remediation,
     is_smoke_test_task,
@@ -63,6 +64,43 @@ def test_merge_rate_excludes_smoke_test_tasks(db_session):
 
     metrics = MetricsService(db_session).compute()
     assert metrics.merge_rate == 1.0
+
+
+def test_throughput_by_day_groups_counts_by_trigger_source():
+    today = datetime.now(UTC).date()
+    tasks = [
+        SimpleNamespace(
+            created_at=datetime(today.year, today.month, today.day, 12, tzinfo=UTC),
+            trigger_source=TriggerSource.GITHUB_WEBHOOK.value,
+        ),
+        SimpleNamespace(
+            created_at=datetime(today.year, today.month, today.day, 13, tzinfo=UTC),
+            trigger_source=TriggerSource.MANUAL_API.value,
+        ),
+        SimpleNamespace(
+            created_at=datetime(today.year, today.month, today.day, 14, tzinfo=UTC),
+            trigger_source=TriggerSource.SCAN.value,
+        ),
+        SimpleNamespace(
+            created_at=datetime(
+                (today - timedelta(days=1)).year,
+                (today - timedelta(days=1)).month,
+                (today - timedelta(days=1)).day,
+                15,
+                tzinfo=UTC,
+            ),
+            trigger_source=TriggerSource.SCHEDULED.value,
+        ),
+    ]
+
+    points = _throughput_by_day(tasks, days=7)
+    today_point = next(point for point in points if point.date == today.isoformat())
+
+    assert today_point.count == 3
+    assert today_point.by_source[TriggerSource.GITHUB_WEBHOOK.value] == 1
+    assert today_point.by_source[TriggerSource.MANUAL_API.value] == 1
+    assert today_point.by_source[TriggerSource.SCAN.value] == 1
+    assert today_point.by_source[TriggerSource.SCHEDULED.value] == 0
 
 
 def test_webhook_task_persists_trigger_source(client, webhook_secret):
