@@ -1,4 +1,4 @@
-import { hasCiFailure, hasOpenPr } from "@/lib/ci"
+import { getCiSummaryState, hasOpenPr } from "@/lib/ci"
 import { isSmokeTestTask } from "@/lib/taskList"
 import type { Task, TaskStatus } from "@/types/task"
 
@@ -43,7 +43,12 @@ export const TRIGGER_SOURCE_CHART_COLORS: Record<string, string> = {
   unknown: "#71717a",
 }
 
-const TERMINAL_TASK_STATUSES: TaskStatus[] = ["MERGED", "FAILED", "ESCALATED"]
+const TERMINAL_TASK_STATUSES: TaskStatus[] = [
+  "MERGED",
+  "COMPLETED",
+  "FAILED",
+  "ESCALATED",
+]
 
 const ACTIVE_WORKFLOW_STATUSES: TaskStatus[] = ["RECEIVED", "SESSION_CREATED", "RUNNING"]
 
@@ -57,6 +62,7 @@ const WORKFLOW_LABELS: Record<TaskStatus, string> = {
   CI_FAILED: "CI failed",
   READY_FOR_REVIEW: "Ready for review",
   MERGED: "Merged",
+  COMPLETED: "Completed",
   FAILED: "Failed",
   ESCALATED: "Escalated",
 }
@@ -68,6 +74,7 @@ export type DevinPresentationState =
   | "human_action_required"
   | "working"
   | "waiting_for_ci"
+  | "waiting_for_review"
   | "waiting_for_input"
   | "unknown"
 
@@ -158,11 +165,18 @@ function isWaitingForInputDetail(detail: string | null | undefined): boolean {
   return normalized === "waiting_for_user" || normalized === "waiting_for_approval"
 }
 
+function hasCompletionSignal(task: Task): boolean {
+  if (task.remediation_outcome) return true
+  return task.devin_status_detail?.toLowerCase() === "finished"
+}
+
 export function isDevinActivelyWorking(task: Task): boolean {
   const devinStatus = task.devin_status?.toLowerCase()
   const detail = task.devin_status_detail?.toLowerCase()
 
   if (isWaitingForInputDetail(detail)) return false
+  if (devinStatus === "exit") return false
+  if (hasCompletionSignal(task)) return false
 
   if (devinStatus === "running" || devinStatus === "resuming") return true
   if (detail === "working") return true
@@ -175,9 +189,13 @@ export function isDevinActivelyWorking(task: Task): boolean {
 }
 
 function isWaitingForCi(task: Task): boolean {
+  return getCiSummaryState(task) === "running" && !isDevinActivelyWorking(task)
+}
+
+function isWaitingForReview(task: Task): boolean {
   return (
     hasOpenPr(task) &&
-    !hasCiFailure(task) &&
+    getCiSummaryState(task) === "passed" &&
     CI_PENDING_STATUSES.includes(task.status) &&
     !isDevinActivelyWorking(task)
   )
@@ -186,6 +204,13 @@ function isWaitingForCi(task: Task): boolean {
 export function getDevinPresentationState(task: Task): DevinPresentation {
   if (task.status === "MERGED") {
     return { state: "completed", label: "Completed", sublabel: null }
+  }
+  if (task.status === "COMPLETED") {
+    return {
+      state: "completed",
+      label: "Resolved without PR",
+      sublabel: task.completion_reason ?? task.implementation_summary ?? null,
+    }
   }
   if (task.status === "FAILED") {
     return { state: "failed", label: "Failed", sublabel: null }
@@ -221,6 +246,10 @@ export function getDevinPresentationState(task: Task): DevinPresentation {
 
   if (isWaitingForCi(task)) {
     return { state: "waiting_for_ci", label: "Waiting for CI", sublabel: null }
+  }
+
+  if (isWaitingForReview(task)) {
+    return { state: "waiting_for_review", label: "Waiting for review", sublabel: null }
   }
 
   if (isWaitingForInputDetail(task.devin_status_detail)) {

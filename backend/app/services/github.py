@@ -114,5 +114,26 @@ class GitHubClient:
             self._handle_error(response)
         return response.json()
 
+    async def get_commit_combined_status(self, repository: str, ref: str) -> dict[str, Any]:
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.get(f"/repos/{owner}/{repo}/commits/{ref}/status")
+        if response.status_code >= 400:
+            self._handle_error(response)
+        return response.json()
+
+    async def list_check_runs_for_ref(self, repository: str, ref: str) -> list[dict[str, Any]]:
+        owner, repo = self._split_repository(repository)
+        client = await self._get_client()
+        response = await client.get(
+            f"/repos/{owner}/{repo}/commits/{ref}/check-runs",
+            params={"filter": "latest", "per_page": 100},
+        )
+        if response.status_code >= 400:
+            self._handle_error(response)
+        data = response.json()
+        check_runs = data.get("check_runs", [])
+        return check_runs if isinstance(check_runs, list) else []
+
     async def get_check_runs(self, repository: str, ref: str) -> list[dict[str, Any]]:
-        raise NotImplementedError("GitHub get_check_runs is planned for Phase 3")
+        return await self.list_check_runs_for_ref(repository, ref)

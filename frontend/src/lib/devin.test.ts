@@ -13,6 +13,7 @@ import {
   getTriggerSourceBadgeVariant,
   getTriggerSourceChartColor,
   hasExplicitBlocker,
+  isDevinActivelyWorking,
 } from "./devin"
 import { makeTask } from "./testFixtures"
 
@@ -40,6 +41,21 @@ describe("Devin presentation states", () => {
     expect(getDevinPresentationState(task)).toMatchObject({
       state: "waiting_for_ci",
       label: "Waiting for CI",
+    })
+  })
+
+  it("maps open PR with passed CI to Waiting for review", () => {
+    const task = makeTask({
+      status: "PR_OPENED",
+      pr_url: "https://github.com/owner/repo/pull/19",
+      pr_state: "open",
+      ci_passed_at: "2026-09-15T03:07:56Z",
+      devin_status: "suspended",
+      devin_status_detail: "inactivity",
+    })
+    expect(getDevinPresentationState(task)).toMatchObject({
+      state: "waiting_for_review",
+      label: "Waiting for review",
     })
   })
 
@@ -194,6 +210,29 @@ describe("Devin usage", () => {
     expect(getDevinUsageNote(0, true)).toBe(
       "Enterprise ACU reporting unavailable (self-serve/on-demand)",
     )
+  })
+})
+
+describe("COMPLETED presentation", () => {
+  it("shows resolved without PR for completed tasks", () => {
+    const task = makeTask({
+      status: "COMPLETED",
+      completion_reason: "Issue already fixed in main branch",
+      remediation_outcome: "success",
+    })
+    const presentation = getDevinPresentationState(task)
+    expect(presentation.label).toBe("Resolved without PR")
+    expect(presentation.sublabel).toBe("Issue already fixed in main branch")
+  })
+
+  it("stops showing working when structured outcome exists while running", () => {
+    const task = makeTask({
+      status: "RUNNING",
+      devin_status: "running",
+      devin_status_detail: "finished",
+      remediation_outcome: "success",
+    })
+    expect(isDevinActivelyWorking(task)).toBe(false)
   })
 })
 

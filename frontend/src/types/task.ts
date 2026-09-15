@@ -6,6 +6,7 @@ export type TaskStatus =
   | "CI_FAILED"
   | "READY_FOR_REVIEW"
   | "MERGED"
+  | "COMPLETED"
   | "FAILED"
   | "ESCALATED"
 
@@ -84,6 +85,7 @@ export interface Task {
   completed_at: string | null
   merged_at: string | null
   failure_reason: string | null
+  completion_reason: string | null
   escalation_reason: string | null
   failure_type: string | null
   ci_classification_reason: string | null
@@ -96,6 +98,7 @@ export interface Task {
   last_ci_check_run_id: number | null
   ci_repair_message_sent_at: string | null
   ci_repair_verified_at: string | null
+  ci_passed_at: string | null
   ci_non_code_failure_count: number
   acu_used: number | null
   acu_source: string | null

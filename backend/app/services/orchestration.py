@@ -27,7 +27,8 @@ from app.schemas.github_events import (
     extract_issue_labels,
     extract_issue_type,
 )
-from app.services.github import GitHubClient
+from app.services.ci_github_sync import sync_ci_pass_from_github
+from app.services.github import GitHubAPIError, GitHubClient
 from app.services.github_events import find_task_for_pr
 from app.schemas.devin_consumption import ConsumptionResponse
 from app.schemas.remediation_result import REMEDIATION_OUTPUT_JSON_SCHEMA
@@ -45,6 +46,7 @@ from app.services.session_lifecycle import (
     is_terminal_devin_status,
     is_valid_status_transition,
     map_devin_session_to_task_status,
+    resolve_completion_reason,
     resolve_exit_escalation_reason,
     resolve_exit_failure_reason,
 )
@@ -440,10 +442,37 @@ class RemediationOrchestrator:
         )
         return updated
 
+    async def sync_task_ci_from_github(self, task_id: int) -> RemediationTask | None:
+        task = self.repo.get_by_id(task_id)
+        if not task or not self.settings.github_token:
+            return task
+        try:
+            return await sync_ci_pass_from_github(task, self.github_client, self.repo)
+        except GitHubAPIError:
+            logger.warning(
+                "sync_task_ci_from_github_failed",
+                extra={"task_id": task_id},
+            )
+            return task
+
+    async def sync_all_tasks_ci_from_github(self) -> int:
+        if not self.settings.github_token:
+            return 0
+
+        updated = 0
+        for task in self.repo.list_tasks_pending_ci_sync():
+            before = task.ci_passed_at
+            refreshed = await self.sync_task_ci_from_github(task.id)
+            if refreshed and refreshed.ci_passed_at and not before:
+                updated += 1
+        return updated
+
     async def refresh_tasks_from_devin(self) -> dict[str, int]:
         """Manually sync Devin session state for tasks visible on the dashboard."""
+        ci_synced = await self.sync_all_tasks_ci_from_github()
+
         if not self.settings.devin_live_enabled:
-            return {"synced": 0, "skipped": 0, "errors": 0}
+            return {"synced": 0, "skipped": 0, "errors": 0, "ci_synced": ci_synced}
 
         synced = 0
         skipped = 0
@@ -473,8 +502,9 @@ class RemediationOrchestrator:
                     },
                 )
 
+        await self.sync_all_tasks_ci_from_github()
         await self.sync_session_insights()
-        return {"synced": synced, "skipped": skipped, "errors": errors}
+        return {"synced": synced, "skipped": skipped, "errors": errors, "ci_synced": ci_synced}
 
     async def apply_session_update(
         self, task: RemediationTask, session: DevinSessionResponse
@@ -483,7 +513,10 @@ class RemediationOrchestrator:
         pr = extract_primary_pull_request(session.pull_requests)
 
         field_updates: dict = extract_devin_audit_fields(session)
-        field_updates.update(extract_structured_result_fields(session))
+        structured_fields = extract_structured_result_fields(session)
+        field_updates.update(structured_fields)
+        for key, value in structured_fields.items():
+            setattr(task, key, value)
         self._apply_session_detail_acu(field_updates, task, session)
         if pr is not None:
             field_updates["pr_url"] = pr[0]
@@ -504,6 +537,9 @@ class RemediationOrchestrator:
         failure_reason = resolve_exit_failure_reason(session, pr, target_status)
         if failure_reason:
             transition_fields["failure_reason"] = failure_reason
+        completion_reason = resolve_completion_reason(task, session, target_status)
+        if completion_reason:
+            transition_fields["completion_reason"] = completion_reason
         escalation_reason = resolve_exit_escalation_reason(session, target_status)
         if escalation_reason:
             transition_fields["escalation_reason"] = escalation_reason
@@ -755,7 +791,12 @@ class RemediationOrchestrator:
                 "to_status": new_status.value,
             },
         )
-        if new_status in {TaskStatus.MERGED, TaskStatus.FAILED, TaskStatus.ESCALATED}:
+        if new_status in {
+            TaskStatus.MERGED,
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.ESCALATED,
+        }:
             fields.setdefault("completed_at", datetime.now(UTC))
         if new_status == TaskStatus.MERGED:
             fields.setdefault("merged_at", datetime.now(UTC))

@@ -240,7 +240,7 @@ All business metrics exclude `task_kind=smoke_test` tasks.
 
 | Metric | Definition |
 |--------|------------|
-| Success Rate | `MERGED / terminal production remediations` |
+| Success Rate | `(MERGED + COMPLETED) / terminal production remediations` |
 | Merge Rate | `MERGED production remediations / all production remediation tasks` |
 | Median MTTR | `median(merged_at - started_at)` for `MERGED` production remediations only |
 | Throughput | Production remediation tasks created in last 7 days |
@@ -258,7 +258,9 @@ All business metrics exclude `task_kind=smoke_test` tasks.
 | PR opened | `pr_url`, `status=PR_OPENED` |
 | CI failure classified | `failure_type`, `ci_classification_reason` |
 | CI repair sent | `ci_repair_attempts`, `ci_repair_message_sent_at` |
+| CI passed (first run) | `ci_passed_at` from successful `check_run` webhook |
 | CI repair verified | `ci_repair_verified_at` (requires subsequent successful check_run) |
+| Resolved without PR | `status=COMPLETED`, `completion_reason` from Devin structured output |
 | Merge confirmed | `status=MERGED`, `merged_at` from GitHub webhook |
 | ACU finalized | `acu_verified=true`, `acu_source=consumption_api` |
 
@@ -323,6 +325,8 @@ Fixtures under `backend/tests/fixtures/check_run_*.json` cover cancelled, timeou
 | `ci_repair_verified_at` not set | No subsequent successful check_run | Wait for CI rerun; verify Check runs webhook subscribed |
 | Merge not reflected | PR webhook not received or `merged=false` | Confirm `pull_request` event with `merged=true` delivered |
 | Post-merge issue not closed | `GITHUB_TOKEN` missing or lacks `issues:write` | Check backend logs; `MERGED` status is preserved regardless |
+| CI stays RUNNING after green CI | `check_run` webhook missed or arrived before `pr_url` | Click **Refresh** (backfills `ci_passed_at` from GitHub); or redeliver success `check_run` webhook |
+| Task stays RUNNING after Devin done | `devin_status=running` + `finished` not yet synced | Click **Refresh**; task should move to `COMPLETED` when structured output is `success` |
 | Metrics show 0% merge rate | No merged tasks yet | Expected on fresh install; see [validation.md](validation.md) |
 | ACU shows `0.0 (reported)` | Consumption API unavailable | Enterprise `ViewOrgConsumption` required for verified ACU |
 

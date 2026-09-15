@@ -70,6 +70,18 @@ async def _terminal_devin_audit_background(task_id: int) -> None:
         db.close()
 
 
+async def _sync_ci_from_github_background(task_id: int) -> None:
+    db = get_session_factory()()
+    try:
+        settings = get_settings()
+        orchestrator = RemediationOrchestrator(db, settings)
+        await orchestrator.sync_task_ci_from_github(task_id)
+    except Exception:
+        logger.exception("CI GitHub sync failed", extra={"task_id": task_id})
+    finally:
+        db.close()
+
+
 async def _send_ci_repair_message_background(task_id: int, message: str) -> None:
     db = get_session_factory()()
     try:
@@ -193,6 +205,12 @@ def _handle_pull_request_event(
         and not event.merged
     ):
         background_tasks.add_task(_terminal_devin_audit_background, task_id)
+    elif outcome == "processed" and task_id is not None and event.action in {
+        "opened",
+        "synchronize",
+        "ready_for_review",
+    }:
+        background_tasks.add_task(_sync_ci_from_github_background, task_id)
 
     return response, 200
 

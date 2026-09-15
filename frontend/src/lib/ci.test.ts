@@ -34,6 +34,17 @@ describe("getCiSummaryState", () => {
     expect(getValidationLabel(task)).toBe("CI passed")
   })
 
+  it("reports passed when ci_passed_at is set on an open PR", () => {
+    const task = makeTask({
+      status: "PR_OPENED",
+      pr_url: "https://github.com/owner/repo/pull/17",
+      pr_state: "open",
+      ci_passed_at: "2026-01-02T00:00:00Z",
+    })
+    expect(getCiSummaryState(task)).toBe("passed")
+    expect(getValidationLabel(task)).toBe("CI passed")
+  })
+
   it("D20: CI failure shows classification in detail", () => {
     const task = makeTask({
       status: "CI_FAILED",

@@ -82,7 +82,7 @@ def test_invalid_hmac_rejected(client):
 
 
 @patch("app.api.webhooks._send_ci_repair_message_background", new_callable=AsyncMock)
-def test_successful_check_ignored(mock_repair, client, webhook_secret, db_session):
+def test_successful_check_records_ci_passed(mock_repair, client, webhook_secret, db_session):
     pr_url = "https://github.com/owner/superset/pull/123"
     _create_task_with_pr(db_session, pr_url=pr_url)
 
@@ -92,8 +92,12 @@ def test_successful_check_ignored(mock_repair, client, webhook_secret, db_sessio
     )
 
     assert response.status_code == 200
-    assert response.json()["outcome"] == "ignored"
+    assert response.json()["outcome"] == "processed"
     mock_repair.assert_not_called()
+
+    refreshed = TaskRepository(db_session).get_by_issue("owner/superset", 44176)
+    assert refreshed is not None
+    assert refreshed.ci_passed_at is not None
 
 
 def test_non_terminal_check_ignored(client, webhook_secret):

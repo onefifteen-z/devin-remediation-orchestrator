@@ -51,8 +51,13 @@ class MetricsService:
             t for t in production_tasks if t.status in TERMINAL_STATUSES
         ]
 
+        successful_terminal = [
+            t
+            for t in production_terminal
+            if t.status in {TaskStatus.MERGED, TaskStatus.COMPLETED}
+        ]
         success_rate = (
-            len(merged_production) / len(production_terminal)
+            len(successful_terminal) / len(production_terminal)
             if production_terminal
             else 0.0
         )

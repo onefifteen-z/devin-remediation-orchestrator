@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from app.config import Settings
@@ -98,12 +100,49 @@ async def test_poll_once_skips_terminal_tasks(db_session, poll_settings):
 
 
 @pytest.mark.asyncio
-async def test_poll_once_skips_ready_for_review(db_session, poll_settings):
+async def test_poll_once_skips_ready_for_review_devin_sync(db_session, poll_settings):
     _make_task(db_session, TaskStatus.READY_FOR_REVIEW)
     client = FakeDevinClient()
     poller = SessionPoller(poll_settings, get_session_factory(), client)
     await poller.poll_once()
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_poll_once_syncs_ci_for_ready_for_review(db_session, poll_settings):
+    repo = TaskRepository(db_session)
+    task = repo.create_task(
+        TaskCreate(
+            github_delivery_id="poll-ci-ready",
+            github_repository="onefifteen-z/superset",
+            github_issue_number=10,
+            github_issue_url="https://github.com/onefifteen-z/superset/issues/10",
+            issue_title="CI pending",
+        )
+    )
+    repo.update_task(
+        task,
+        status=TaskStatus.READY_FOR_REVIEW,
+        pr_url="https://github.com/onefifteen-z/superset/pull/10",
+        pr_state="open",
+        devin_session_id="devin-ready",
+        devin_session_url="https://app.devin.ai/sessions/devin-ready",
+    )
+
+    settings = Settings(
+        devin_session_poll_interval_seconds=15,
+        devin_poll_max_failures=3,
+        github_token="ghp_test",
+    )
+    poller = SessionPoller(settings, get_session_factory(), FakeDevinClient())
+    with patch.object(
+        RemediationOrchestrator,
+        "sync_task_ci_from_github",
+        new=AsyncMock(),
+    ) as ci_sync_mock:
+        await poller.poll_once()
+
+    ci_sync_mock.assert_awaited_once_with(task.id)
 
 
 @pytest.mark.asyncio

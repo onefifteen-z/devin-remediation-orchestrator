@@ -17,6 +17,7 @@ const STATUS_OPTIONS: Array<{ value: "" | TaskStatus; label: string }> = [
   { value: "PR_OPENED", label: "PR opened" },
   { value: "CI_FAILED", label: "CI failed" },
   { value: "READY_FOR_REVIEW", label: "Ready for review" },
+  { value: "COMPLETED", label: "Completed" },
   { value: "MERGED", label: "Merged" },
   { value: "FAILED", label: "Failed" },
   { value: "ESCALATED", label: "Escalated" },

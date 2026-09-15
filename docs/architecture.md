@@ -105,6 +105,7 @@ stateDiagram-v2
   PR_OPENED --> READY_FOR_REVIEW: Devin exit + PR
   note right of PR_OPENED: CI metadata stored separately\nworkflow status unchanged on CI fail
   READY_FOR_REVIEW --> MERGED: GitHub pull_request merged
+  RUNNING --> COMPLETED: Devin success without PR
   PR_OPENED --> ESCALATED: PR closed without merge
   READY_FOR_REVIEW --> ESCALATED: PR closed without merge
   RECEIVED --> FAILED: unrecoverable error
@@ -119,6 +120,7 @@ stateDiagram-v2
 | `PR_OPENED` | Pull request created |
 | `READY_FOR_REVIEW` | Devin finished, PR awaiting human review |
 | `MERGED` | PR merged (GitHub-authoritative) |
+| `COMPLETED` | Devin finished successfully without opening a PR (e.g. issue already fixed) |
 | `FAILED` | Unrecoverable failure |
 | `ESCALATED` | Retries/timeout/ACU cap exceeded |
 
@@ -132,6 +134,7 @@ CI failure metadata is stored on the task without transitioning workflow `status
 | Agent execution | Devin V3 session poll | `devin_status`, `devin_status_detail` |
 | PR / merge state | GitHub `pull_request` webhooks | `pr_url`, `pr_state`, `merged_at` |
 | CI failure state | GitHub `check_run` webhooks + classifier | `failure_type`, `ci_check_name`, `ci_conclusion`, `ci_repair_attempts`, etc. |
+| CI pass state | GitHub `check_run` webhooks + GitHub API backfill on Refresh/poller | `ci_passed_at` (first pass); `ci_repair_verified_at` (after repair) |
 | Trigger attribution | Orchestrator | `trigger_source` |
 | Engineering report | Devin structured output | `remediation_outcome`, `root_cause`, `structured_result_json` |
 
@@ -251,6 +254,7 @@ flowchart TB
 | `issues` | `labeled` + remediate label | Create remediation task, async Devin dispatch |
 | `pull_request` | `opened`, `reopened`, `synchronize`, `closed` | Update PR metadata, merge lifecycle |
 | `check_run` | `completed` + failure-like conclusion | Classify CI failure, persist metadata, optional same-session repair |
+| `check_run` | `completed` + `success` | Set `ci_passed_at` (first pass) or `ci_repair_verified_at` (after prior failure) |
 
 ### CI classification and repair
 

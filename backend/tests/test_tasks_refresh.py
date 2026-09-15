@@ -125,6 +125,42 @@ async def test_refresh_tasks_from_devin_syncs_terminal_tasks(db_session):
     assert refreshed.acu_source == "consumption_api"
 
 
+@pytest.mark.asyncio
+async def test_refresh_syncs_ci_even_when_devin_live_disabled(db_session):
+    repo = TaskRepository(db_session)
+    task = repo.create_task(
+        TaskCreate(
+            github_delivery_id="refresh-ci-only",
+            github_repository="onefifteen-z/superset",
+            github_issue_number=10,
+            github_issue_url="https://github.com/onefifteen-z/superset/issues/10",
+            issue_title="CI only refresh",
+        )
+    )
+    repo.update_task(
+        task,
+        status=TaskStatus.READY_FOR_REVIEW,
+        pr_url="https://github.com/onefifteen-z/superset/pull/10",
+        pr_state="open",
+        devin_session_id="devin-ci-only",
+    )
+
+    orchestrator = RemediationOrchestrator(
+        db_session,
+        Settings(devin_live_enabled=False, github_token="ghp_test"),
+        devin_client=RefreshDevinClient(),
+    )
+    with patch.object(
+        orchestrator,
+        "sync_all_tasks_ci_from_github",
+        new=AsyncMock(return_value=1),
+    ) as ci_sync_mock:
+        result = await orchestrator.refresh_tasks_from_devin()
+
+    assert result == {"synced": 0, "skipped": 0, "errors": 0, "ci_synced": 1}
+    assert ci_sync_mock.await_count == 1
+
+
 def test_refresh_tasks_api(client, db_session):
     repo = TaskRepository(db_session)
     repo.create_task(
@@ -144,4 +180,4 @@ def test_refresh_tasks_api(client, db_session):
         response = client.post("/api/tasks/refresh")
 
     assert response.status_code == 200
-    assert response.json() == {"synced": 1, "skipped": 0, "errors": 0}
+    assert response.json() == {"synced": 1, "skipped": 0, "errors": 0, "ci_synced": 0}

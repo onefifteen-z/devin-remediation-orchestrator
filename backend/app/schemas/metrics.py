@@ -23,7 +23,7 @@ class MetricsResponse(BaseModel):
     )
     success_rate: float = Field(
         default=0.0,
-        description="MERGED / terminal production remediations (excludes smoke_test).",
+        description="(MERGED + COMPLETED) / terminal production remediations (excludes smoke_test).",
     )
     merge_rate: float = Field(
         default=0.0,

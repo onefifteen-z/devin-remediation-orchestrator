@@ -75,7 +75,7 @@ Skip if CI passes on first run. To validate CI repair, use an issue that produce
 | Classification correct | `ci_classification_reason` matches failure type |
 | Same-session repair | `ci_repair_attempts` incremented; **no new** `devin_session_id` |
 | Repair message sent | `ci_repair_message_sent_at` populated |
-| Repair verified | `ci_repair_verified_at` set after subsequent successful `check_run` |
+| Repair verified | `ci_passed_at` set on first successful `check_run`, or `ci_repair_verified_at` after repair |
 
 **Does not count as repair success:**
 

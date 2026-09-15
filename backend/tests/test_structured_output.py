@@ -169,7 +169,7 @@ def test_structured_success_does_not_mark_task_merged(db_session):
         structured_output={"outcome": "success", "root_cause": "Fixed"},
     )
     target = map_devin_session_to_task_status(task, session)
-    assert target == TaskStatus.FAILED
+    assert target == TaskStatus.COMPLETED
 
 
 def test_blocked_structured_output_escalates(db_session):
@@ -190,6 +190,39 @@ def test_blocked_structured_output_escalates(db_session):
         structured_output={"outcome": "blocked", "blocker": "Needs human input"},
     )
     assert map_devin_session_to_task_status(task, session) == TaskStatus.ESCALATED
+
+
+@pytest.mark.asyncio
+async def test_apply_session_update_running_finished_success_completes_without_pr(db_session):
+    task = TaskRepository(db_session).create_task(
+        TaskCreate(
+            github_delivery_id="structured-running-finished-001",
+            github_repository="owner/superset",
+            github_issue_number=512,
+            github_issue_url="https://github.com/owner/superset/issues/512",
+            issue_title="Already fixed",
+        )
+    )
+    task = TaskRepository(db_session).update_status(
+        task,
+        TaskStatus.RUNNING,
+        devin_session_id="devin-running-finished",
+        devin_session_url="https://app.devin.ai/sessions/devin-running-finished",
+    )
+    orchestrator = RemediationOrchestrator(db_session, Settings(), devin_client=FakeDevinClient())
+    session = DevinSessionResponse(
+        session_id="devin-running-finished",
+        url="https://app.devin.ai/sessions/devin-running-finished",
+        status="running",
+        status_detail="finished",
+        structured_output={
+            "outcome": "success",
+            "implementation_summary": "Issue already fixed upstream",
+        },
+    )
+    updated = await orchestrator.apply_session_update(task, session)
+    assert updated.status == TaskStatus.COMPLETED
+    assert updated.completion_reason == "Issue already fixed upstream"
 
 
 def test_extract_structured_result_fields_empty_when_missing():

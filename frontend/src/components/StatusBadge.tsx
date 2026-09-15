@@ -9,6 +9,7 @@ const statusConfig: Record<TaskStatus, { variant: "default" | "success" | "warni
   CI_FAILED: { variant: "destructive", label: "CI_FAILED" },
   READY_FOR_REVIEW: { variant: "warning", label: "READY_FOR_REVIEW" },
   MERGED: { variant: "success", label: "MERGED" },
+  COMPLETED: { variant: "success", label: "Completed" },
   FAILED: { variant: "destructive", label: "FAILED" },
   ESCALATED: { variant: "destructive", label: "ESCALATED" },
 }

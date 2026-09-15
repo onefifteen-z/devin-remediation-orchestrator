@@ -38,6 +38,7 @@ STATUS_ORDER = {
     TaskStatus.CI_FAILED: 4,
     TaskStatus.READY_FOR_REVIEW: 5,
     TaskStatus.MERGED: 6,
+    TaskStatus.COMPLETED: 6,
     TaskStatus.FAILED: 6,
     TaskStatus.ESCALATED: 6,
 }
@@ -112,19 +113,59 @@ def extract_structured_result_fields(session: DevinSessionResponse) -> dict:
     return remediation_result_to_db_fields(structured, session.structured_output)
 
 
+def _persisted_structured_outcome(task: RemediationTask) -> str | None:
+    if not task.remediation_outcome:
+        return None
+    return task.remediation_outcome.lower()
+
+
+def _effective_structured_outcome(
+    task: RemediationTask,
+    session: DevinSessionResponse,
+) -> str | None:
+    structured = _parse_structured_output(session)
+    if structured:
+        return structured.outcome
+    return _persisted_structured_outcome(task)
+
+
+def _should_apply_completion_logic(
+    task: RemediationTask,
+    session: DevinSessionResponse,
+    pr: tuple[str, str | None] | None,
+) -> bool:
+    if pr is not None:
+        return False
+
+    devin_status = session.status.lower()
+    if devin_status == "exit":
+        return True
+    if devin_status not in {"running", "resuming", "suspended"}:
+        return False
+
+    detail = (session.status_detail or "").lower()
+    if detail == "finished":
+        return True
+    if _parse_structured_output(session) is not None:
+        return True
+    return _persisted_structured_outcome(task) is not None
+
+
 def _resolve_exit_status(
+    task: RemediationTask,
     session: DevinSessionResponse,
     pr: tuple[str, str | None] | None,
 ) -> TaskStatus:
     if pr is not None:
         return TaskStatus.READY_FOR_REVIEW
 
-    structured = _parse_structured_output(session)
-    if structured:
-        if structured.outcome == "failed":
-            return TaskStatus.FAILED
-        if structured.outcome == "blocked":
-            return TaskStatus.ESCALATED
+    outcome = _effective_structured_outcome(task, session)
+    if outcome == "failed":
+        return TaskStatus.FAILED
+    if outcome == "blocked":
+        return TaskStatus.ESCALATED
+    if outcome == "success":
+        return TaskStatus.COMPLETED
 
     return TaskStatus.FAILED
 
@@ -170,14 +211,18 @@ def map_devin_session_to_task_status(
     elif devin_status in {"running", "resuming"}:
         if pr is not None:
             target = TaskStatus.PR_OPENED
+        elif _should_apply_completion_logic(task, session, pr):
+            target = _resolve_exit_status(task, session, pr)
         else:
             target = TaskStatus.RUNNING
     elif devin_status == "suspended":
         target = _resolve_suspended_status(session, pr)
+        if target is None and _should_apply_completion_logic(task, session, pr):
+            target = _resolve_exit_status(task, session, pr)
     elif devin_status == "error":
         target = TaskStatus.PR_OPENED if pr is not None else TaskStatus.FAILED
     elif devin_status == "exit":
-        target = _resolve_exit_status(session, pr)
+        target = _resolve_exit_status(task, session, pr)
 
     if target is None or target == task.status:
         return None
@@ -198,7 +243,7 @@ def map_devin_session_to_task_status(
 
 
 def is_valid_status_transition(current: TaskStatus, target: TaskStatus) -> bool:
-    if current in {TaskStatus.MERGED, TaskStatus.FAILED, TaskStatus.ESCALATED}:
+    if current in {TaskStatus.MERGED, TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.ESCALATED}:
         return False
     if target == current:
         return False
@@ -228,6 +273,27 @@ def resolve_exit_failure_reason(
     if pr is None and session.status.lower() == "exit":
         return "Session exited without pull request"
     return None
+
+
+def resolve_completion_reason(
+    task: RemediationTask,
+    session: DevinSessionResponse,
+    target: TaskStatus,
+) -> str | None:
+    if target != TaskStatus.COMPLETED:
+        return None
+    structured = _parse_structured_output(session)
+    if structured:
+        return (
+            structured.implementation_summary
+            or structured.root_cause
+            or "Issue resolved without pull request"
+        )
+    if task.implementation_summary:
+        return task.implementation_summary
+    if task.root_cause:
+        return task.root_cause
+    return "Issue resolved without pull request"
 
 
 def resolve_exit_escalation_reason(

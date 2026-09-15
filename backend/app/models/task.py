@@ -15,6 +15,7 @@ class TaskStatus(str, enum.Enum):
     CI_FAILED = "CI_FAILED"
     READY_FOR_REVIEW = "READY_FOR_REVIEW"
     MERGED = "MERGED"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     ESCALATED = "ESCALATED"
 
@@ -30,6 +31,7 @@ POLLABLE_STATUSES = ACTIVE_STATUSES
 
 TERMINAL_STATUSES = {
     TaskStatus.MERGED,
+    TaskStatus.COMPLETED,
     TaskStatus.FAILED,
     TaskStatus.ESCALATED,
 }
@@ -89,6 +91,7 @@ class RemediationTask(Base):
     merged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     failure_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    completion_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     escalation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     failure_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -105,6 +108,7 @@ class RemediationTask(Base):
     ci_repair_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    ci_passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ci_non_code_failure_count: Mapped[int] = mapped_column(Integer, default=0)
 
     acu_used: Mapped[float | None] = mapped_column(Float, nullable=True)

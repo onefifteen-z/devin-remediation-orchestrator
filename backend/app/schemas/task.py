@@ -62,6 +62,7 @@ class TaskResponse(BaseModel):
     completed_at: datetime | None
     merged_at: datetime | None
     failure_reason: str | None
+    completion_reason: str | None = None
     escalation_reason: str | None
     failure_type: str | None = None
     ci_classification_reason: str | None = None
@@ -77,6 +78,7 @@ class TaskResponse(BaseModel):
     last_ci_check_run_id: int | None = None
     ci_repair_message_sent_at: datetime | None = None
     ci_repair_verified_at: datetime | None = None
+    ci_passed_at: datetime | None = None
     ci_non_code_failure_count: int = 0
     acu_used: float | None
     acu_source: str | None = None
@@ -136,6 +138,7 @@ class TaskResponse(BaseModel):
             completed_at=task.completed_at,
             merged_at=task.merged_at,
             failure_reason=task.failure_reason,
+            completion_reason=task.completion_reason,
             escalation_reason=task.escalation_reason,
             failure_type=task.failure_type,
             ci_classification_reason=task.ci_classification_reason,
@@ -148,6 +151,7 @@ class TaskResponse(BaseModel):
             last_ci_check_run_id=task.last_ci_check_run_id,
             ci_repair_message_sent_at=task.ci_repair_message_sent_at,
             ci_repair_verified_at=task.ci_repair_verified_at,
+            ci_passed_at=task.ci_passed_at,
             ci_non_code_failure_count=task.ci_non_code_failure_count,
             acu_used=task.acu_used,
             acu_source=task.acu_source,
@@ -178,3 +182,4 @@ class TaskRefreshResponse(BaseModel):
     synced: int
     skipped: int
     errors: int
+    ci_synced: int = 0
