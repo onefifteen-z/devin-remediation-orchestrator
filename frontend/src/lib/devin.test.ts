@@ -4,12 +4,14 @@ import {
   formatAcuDisplay,
   formatDevinUsageKpi,
   formatTriggerSource,
+  getActiveTriggerSources,
   getAttentionSummary,
   getDevinPresentationState,
   getDevinUsageNote,
   getRawDevinStateClarification,
   getRawDevinStateSnapshotNote,
   getTriggerSourceBadgeVariant,
+  getTriggerSourceChartColor,
   hasExplicitBlocker,
 } from "./devin"
 import { makeTask } from "./testFixtures"
@@ -144,6 +146,29 @@ describe("getTriggerSourceBadgeVariant", () => {
       getTriggerSourceBadgeVariant,
     )
     expect(new Set(variants).size).toBe(variants.length)
+  })
+})
+
+describe("throughput chart helpers", () => {
+  it("returns distinct colors for each trigger source", () => {
+    const colors = ["github_webhook", "manual_api", "scan", "scheduled"].map(
+      getTriggerSourceChartColor,
+    )
+    expect(new Set(colors).size).toBe(colors.length)
+  })
+
+  it("returns only sources with non-zero counts", () => {
+    const active = getActiveTriggerSources([
+      {
+        by_source: {
+          github_webhook: 2,
+          manual_api: 0,
+          scan: 1,
+          scheduled: 0,
+        },
+      },
+    ])
+    expect(active).toEqual(["github_webhook", "scan"])
   })
 })
 

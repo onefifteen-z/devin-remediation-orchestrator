@@ -1,6 +1,7 @@
 export interface ThroughputPoint {
   date: string
   count: number
+  by_source?: Record<string, number>
 }
 
 export interface OrgUsageMetrics {

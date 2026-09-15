@@ -24,6 +24,23 @@ const TRIGGER_SOURCE_LABELS: Record<string, string> = {
   manual_api: "Manual API",
   scan: "Scan",
   scheduled: "Scheduled",
+  unknown: "Unknown",
+}
+
+export const TRIGGER_SOURCE_CHART_ORDER = [
+  "github_webhook",
+  "manual_api",
+  "scan",
+  "scheduled",
+  "unknown",
+] as const
+
+export const TRIGGER_SOURCE_CHART_COLORS: Record<string, string> = {
+  github_webhook: "#60a5fa",
+  manual_api: "#fbbf24",
+  scan: "#a1a1aa",
+  scheduled: "#34d399",
+  unknown: "#71717a",
 }
 
 const TERMINAL_TASK_STATUSES: TaskStatus[] = ["MERGED", "FAILED", "ESCALATED"]
@@ -88,6 +105,18 @@ export function formatTriggerSource(triggerSource: string | null | undefined): s
  * Distinct hues only so multiple sources are scannable in one pass; the
  * variants carry no severity meaning.
  */
+export function getTriggerSourceChartColor(triggerSource: string): string {
+  return TRIGGER_SOURCE_CHART_COLORS[triggerSource] ?? TRIGGER_SOURCE_CHART_COLORS.unknown
+}
+
+export function getActiveTriggerSources(
+  points: Array<{ by_source?: Record<string, number> }>,
+): string[] {
+  return TRIGGER_SOURCE_CHART_ORDER.filter((source) =>
+    points.some((point) => (point.by_source?.[source] ?? 0) > 0),
+  )
+}
+
 export function getTriggerSourceBadgeVariant(
   triggerSource: string | null | undefined,
 ): "default" | "info" | "success" | "warning" {

@@ -1,32 +1,48 @@
-# React + TypeScript + Vite
+# Operations Dashboard
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+React + TypeScript + Vite frontend for the Devin Remediation Orchestrator.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Dashboard: http://localhost:3000
+
+## Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_BASE_URL` | Backend URL (default: `http://localhost:8000`) |
+
+Never put secrets in `VITE_*` variables.
+
+## Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Development server with HMR |
+| `npm run build` | Production build |
+| `npm test` | Run Vitest unit tests |
+| `npm run lint` | Oxlint |
+| `npm run preview` | Preview production build |
+
+## Features
+
+- Metrics cards (merge rate, MTTR, CI recovery, verified ACU)
+- Throughput chart and Devin org metrics section
+- Task table with pagination, filtering, sorting, and expandable rows
+- Structured result, CI metadata, and session insights panels
+- **Scan labeled issues** and **Refresh** (Devin sync) actions
+- Auto-refresh every 15 seconds via TanStack Query
+
+## Tests
+
+```bash
+npm test
+```
+
+60 unit tests across `src/lib/` and component helpers.

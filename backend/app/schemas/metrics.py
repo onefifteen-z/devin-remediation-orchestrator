@@ -6,6 +6,10 @@ from app.schemas.devin_metrics import OrgMetricsSnapshot
 class ThroughputPoint(BaseModel):
     date: str
     count: int
+    by_source: dict[str, int] = Field(
+        default_factory=dict,
+        description="Task counts for this day grouped by trigger_source.",
+    )
 
 
 class MetricsResponse(BaseModel):
